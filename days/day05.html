@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 5 · Morse Code Elf</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="5">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 5</p>
+  <h1><span class="daynum">5</span>Morse Code Elf</h1>
+  <p class="lede">Beep beep beeeep! The active buzzer makes a sound as soon as it gets power. Today you'll teach the Pico Morse code using dictionaries and strings — and in the exercise, build a Morse <i>decoder</i> with the button.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-012 Active buzzer</li>
+  <li>KY-004 Button (for the exercise)</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>An <b>active</b> buzzer has a tiny oscillator inside: give it voltage and it beeps at its own fixed pitch. (Tomorrow's <i>passive</i> buzzer needs us to make the tone ourselves.) Tip: the active buzzer usually has a sticker on top and a sealed black bottom.</p>
+<div class="note"><p>The KY-012 is rated for 5 V; at 3.3 V it is a bit quieter, which your family may appreciate. On some boards the middle pin isn't connected at all — wiring it to <b>+</b> does no harm.</p></div>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "bz", "name": "KY-012 Active buzzer", "col": 28, "pins": ["S", "+", "-"], "icon": "buzzer" },
+    { "id": "btn", "name": "KY-004 Button", "col": 38, "pins": ["S", "+", "-"], "icon": "button" }
+  ],
+  "wires": [
+    { "from": "GP15", "to": "bz.S", "color": "yellow", "note": "buzzer signal" },
+    { "from": "bz.+", "to": "+" },
+    { "from": "bz.-", "to": "-" },
+    { "from": "GP16", "to": "btn.S", "color": "blue", "note": "button signal" },
+    { "from": "btn.+", "to": "+" },
+    { "from": "btn.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Beep</h3>
+<p>To the Pico, the active buzzer is just like an LED: an output pin.</p>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+buzzer = Pin(15, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+
+buzzer.on(); time.sleep(0.2); buzzer.off()
+</script>
+
+<h3>2. Morse code as a dictionary</h3>
+<p>A <b>dictionary</b> maps keys to values — perfect for "letter → dots and dashes". <code>MORSE["S"]</code> gives <code>"..."</code>.</p>
+<script type="text/x-python">
+MORSE = {
+    "A": ".-",   "B": "-...", "C": "-.-.", "D": "-..",  "E": ".",    "F": "..-.",
+    "G": "--.",  "H": "....", "I": "..",   "J": ".---", "K": "-.-",  "L": ".-..",
+    "M": "--",   "N": "-.",   "O": "---",  "P": ".--.", "Q": "--.-", "R": ".-.",
+    "S": "...",  "T": "-",    "U": "..-",  "V": "...-", "W": ".--",  "X": "-..-",
+    "Y": "-.--", "Z": "--..",
+    "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+    "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----.",
+}
+print(MORSE["S"], MORSE["O"], MORSE["S"])
+</script>
+
+<h3>3. Timing rules</h3>
+<p>Morse timing is all based on one <b>unit</b>: a dot is 1 unit, a dash 3 units, the gap inside a letter 1 unit, between letters 3 units and between words 7 units. We play each symbol on the buzzer <i>and</i> the LED.</p>
+<script type="text/x-python">
+UNIT = 0.1          # seconds - smaller is faster
+
+def tone(units):
+    buzzer.on(); led.on()
+    time.sleep(units * UNIT)
+    buzzer.off(); led.off()
+
+def play_letter(code):
+    for symbol in code:
+        tone(1 if symbol == "." else 3)
+        time.sleep(UNIT)                 # gap inside a letter
+
+play_letter(MORSE["S"])
+</script>
+
+<h3>4. Whole messages</h3>
+<p>We walk through the text letter by letter. Spaces mean "word gap". <code>.upper()</code> lets you type in lower case; unknown characters are skipped with <code>.get()</code>, which returns <code>None</code> instead of crashing.</p>
+<script type="text/x-python">
+def play(text):
+    for ch in text.upper():
+        if ch == " ":
+            time.sleep(4 * UNIT)         # 7 in total with the 3 below
+            continue
+        code = MORSE.get(ch)
+        if code is None:
+            continue
+        print(ch, code)
+        play_letter(code)
+        time.sleep(2 * UNIT)             # 3 in total with the 1 from play_letter
+
+play("Merry Xmas")
+</script>
+
+<script type="text/x-python" data-title="Full program — day05 main.py">
+from machine import Pin
+import time
+
+buzzer = Pin(15, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+UNIT = 0.1
+
+MORSE = {
+    "A": ".-",   "B": "-...", "C": "-.-.", "D": "-..",  "E": ".",    "F": "..-.",
+    "G": "--.",  "H": "....", "I": "..",   "J": ".---", "K": "-.-",  "L": ".-..",
+    "M": "--",   "N": "-.",   "O": "---",  "P": ".--.", "Q": "--.-", "R": ".-.",
+    "S": "...",  "T": "-",    "U": "..-",  "V": "...-", "W": ".--",  "X": "-..-",
+    "Y": "-.--", "Z": "--..",
+    "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+    "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----.",
+}
+
+def tone(units):
+    buzzer.on(); led.on()
+    time.sleep(units * UNIT)
+    buzzer.off(); led.off()
+
+def play_letter(code):
+    for symbol in code:
+        tone(1 if symbol == "." else 3)
+        time.sleep(UNIT)
+
+def play(text):
+    for ch in text.upper():
+        if ch == " ":
+            time.sleep(4 * UNIT)
+            continue
+        code = MORSE.get(ch)
+        if code:
+            play_letter(code)
+            time.sleep(2 * UNIT)
+
+while True:
+    msg = input("Message to send: ")
+    play(msg)
+</script>
+<p><code>input()</code> waits for you to type into Thonny's shell — so this program turns your Pico into a Morse transmitter.</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Dictionaries (<code>{key: value}</code>, <code>d[key]</code>, <code>d.get(key)</code>).</li>
+  <li>Looping over strings, <code>.upper()</code>, <code>continue</code>.</li>
+  <li>Building timing from a single constant so the whole program speeds up or slows down together.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: Morse key decoder</h2>
+<p>Turn it around: use the <b>button as a Morse key</b>. The Pico should listen to your presses and print the letters you tap.</p>
+<ol>
+  <li>While the button is held, the buzzer sounds (so you hear yourself).</li>
+  <li>A press shorter than 2 units is a dot, longer is a dash.</li>
+  <li>When the button has been released for more than 3 units, the letter is finished: look it up and print it. After 7 units, print a space.</li>
+  <li>Use <code>UNIT = 0.2</code> to start with — tapping fast is hard!</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Build a <b>reverse dictionary</b>: <code>DECODE = {code: letter for letter, code in MORSE.items()}</code>. Keep a string <code>current</code> that collects <code>"."</code> and <code>"-"</code>. Record <code>ticks_ms()</code> when the button goes down and when it goes up.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The loop tracks two moments: when the key went down (to measure the press) and when it went up (to measure the silence). The variable <code>space_done</code> makes sure a word gap is printed only once.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+buzzer = Pin(15, Pin.OUT)
+button = Pin(16, Pin.IN)
+IDLE = button.value()
+UNIT_MS = 200
+
+MORSE = {
+    "A": ".-",   "B": "-...", "C": "-.-.", "D": "-..",  "E": ".",    "F": "..-.",
+    "G": "--.",  "H": "....", "I": "..",   "J": ".---", "K": "-.-",  "L": ".-..",
+    "M": "--",   "N": "-.",   "O": "---",  "P": ".--.", "Q": "--.-", "R": ".-.",
+    "S": "...",  "T": "-",    "U": "..-",  "V": "...-", "W": ".--",  "X": "-..-",
+    "Y": "-.--", "Z": "--..",
+}
+DECODE = {code: letter for letter, code in MORSE.items()}
+
+def pressed():
+    return button.value() != IDLE
+
+current = ""
+was_down = False
+t_down = t_up = time.ticks_ms()
+space_done = True
+
+print("Tap away!")
+while True:
+    down = pressed()
+    now = time.ticks_ms()
+    if down and not was_down:                  # key pressed
+        t_down = now
+        buzzer.on()
+    elif not down and was_down:                # key released
+        buzzer.off()
+        held = time.ticks_diff(now, t_down)
+        if held > 20:                          # ignore bounce
+            current += "." if held < 2 * UNIT_MS else "-"
+            t_up = now
+            space_done = False
+    elif not down:                             # silence: letter or word finished?
+        quiet = time.ticks_diff(now, t_up)
+        if current and quiet > 3 * UNIT_MS:
+            print(DECODE.get(current, "?"), end="")
+            current = ""
+        elif not current and not space_done and quiet > 7 * UNIT_MS:
+            print(" ", end="")
+            space_done = True
+    was_down = down
+    time.sleep_ms(5)
+</script>
+<p>Pairing with a friend? Connect a second Pico running the transmitter program, or simply tap a message for someone to decode by ear!</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

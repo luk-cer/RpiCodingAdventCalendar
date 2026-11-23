@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 6 · Jingle Bells</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="6">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 6</p>
+  <h1><span class="daynum">6</span>Jingle Bells</h1>
+  <p class="lede">Happy St. Nicholas Day! The passive buzzer can play any note — if you tell it how fast to vibrate. You'll compute musical frequencies with a bit of maths and play a Christmas classic.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-006 Passive buzzer</li>
+  <li>3 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>The passive buzzer is a tiny loudspeaker. It only needs signal and ground; the middle pin is not used.</p>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "bz", "name": "KY-006 Passive buzzer", "col": 30, "pins": ["S", "mid", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP15", "to": "bz.S", "color": "yellow", "note": "sound" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. A tone is a frequency</h3>
+<p>Sound is air vibrating. If the buzzer's membrane moves back and forth 440 times per second (440 <b>Hz</b>), you hear the note A. PWM does exactly that: <code>freq(440)</code> makes 440 pulses per second, and a 50 % duty cycle gives the loudest, cleanest square wave.</p>
+<script type="text/x-python">
+from machine import Pin, PWM
+import time
+
+bz = PWM(Pin(15))
+bz.freq(440)
+bz.duty_u16(32768)     # 50 % - sound on
+time.sleep(1)
+bz.duty_u16(0)         # silence
+</script>
+<p>Try other frequencies between 100 and 4000. Above ~2000 Hz this little buzzer is loudest; low notes are quiet.</p>
+
+<h3>2. From note names to frequencies</h3>
+<p>Every semitone up multiplies the frequency by the 12th root of 2 (≈ 1.0595), so 12 semitones = one octave = double the frequency. Musicians and computers number notes with <b>MIDI numbers</b>: A4 = 69. The formula is <code>f = 440 · 2^((n − 69) / 12)</code>.</p>
+<script type="text/x-python">
+NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+def note_freq(name):
+    """'A4' -> 440.0, 'C#5' -> 554.4"""
+    letter, octave = name[:-1], int(name[-1])
+    n = NAMES.index(letter) + 12 * (octave + 1)    # MIDI number
+    return 440 * 2 ** ((n - 69) / 12)
+
+for n in ("C4", "A4", "A5", "E5"):
+    print(n, round(note_freq(n), 1))
+</script>
+<script type="text/x-output">
+C4 261.6
+A4 440.0
+A5 880.0
+E5 659.3
+</script>
+
+<h3>3. Playing a note</h3>
+<p>Each note has a pitch and a length in beats. We stop the sound briefly at the end of every note — otherwise two equal notes in a row would melt into one long one.</p>
+<script type="text/x-python">
+BEAT = 0.22    # seconds per beat (smaller = faster)
+
+def play_note(name, beats):
+    if name == "R":                      # R = rest (silence)
+        bz.duty_u16(0)
+    else:
+        bz.freq(int(note_freq(name)))
+        bz.duty_u16(32768)
+    time.sleep(beats * BEAT * 0.9)
+    bz.duty_u16(0)                       # short gap between notes
+    time.sleep(beats * BEAT * 0.1)
+
+for n in ("C5", "E5", "G5", "C6"):
+    play_note(n, 1)
+</script>
+
+<h3>4. Jingle Bells</h3>
+<p>A melody is just a <b>list of (note, beats)</b> tuples. Data separate from code again — just like the traffic light phases on Day 1.</p>
+<script type="text/x-python">
+JINGLE = [
+    ("E5", 1), ("E5", 1), ("E5", 2),
+    ("E5", 1), ("E5", 1), ("E5", 2),
+    ("E5", 1), ("G5", 1), ("C5", 1.5), ("D5", 0.5), ("E5", 4),
+    ("F5", 1), ("F5", 1), ("F5", 1.5), ("F5", 0.5),
+    ("F5", 1), ("E5", 1), ("E5", 1), ("E5", 0.5), ("E5", 0.5),
+    ("E5", 1), ("D5", 1), ("D5", 1), ("E5", 1), ("D5", 2), ("G5", 2),
+    ("E5", 1), ("E5", 1), ("E5", 2),
+    ("E5", 1), ("E5", 1), ("E5", 2),
+    ("E5", 1), ("G5", 1), ("C5", 1.5), ("D5", 0.5), ("E5", 4),
+    ("F5", 1), ("F5", 1), ("F5", 1.5), ("F5", 0.5),
+    ("F5", 1), ("E5", 1), ("E5", 1), ("E5", 0.5), ("E5", 0.5),
+    ("G5", 1), ("G5", 1), ("F5", 1), ("D5", 1), ("C5", 4),
+]
+
+def play(song):
+    for name, beats in song:
+        play_note(name, beats)
+
+play(JINGLE)
+</script>
+
+<script type="text/x-python" data-title="Full program — day06 main.py">
+from machine import Pin, PWM
+import time
+
+bz = PWM(Pin(15))
+bz.duty_u16(0)
+BEAT = 0.22
+NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+def note_freq(name):
+    letter, octave = name[:-1], int(name[-1])
+    n = NAMES.index(letter) + 12 * (octave + 1)
+    return 440 * 2 ** ((n - 69) / 12)
+
+def play_note(name, beats):
+    if name != "R":
+        bz.freq(int(note_freq(name)))
+        bz.duty_u16(32768)
+    time.sleep(beats * BEAT * 0.9)
+    bz.duty_u16(0)
+    time.sleep(beats * BEAT * 0.1)
+
+JINGLE = [
+    ("E5", 1), ("E5", 1), ("E5", 2), ("E5", 1), ("E5", 1), ("E5", 2),
+    ("E5", 1), ("G5", 1), ("C5", 1.5), ("D5", 0.5), ("E5", 4),
+    ("F5", 1), ("F5", 1), ("F5", 1.5), ("F5", 0.5),
+    ("F5", 1), ("E5", 1), ("E5", 1), ("E5", 0.5), ("E5", 0.5),
+    ("E5", 1), ("D5", 1), ("D5", 1), ("E5", 1), ("D5", 2), ("G5", 2),
+    ("E5", 1), ("E5", 1), ("E5", 2), ("E5", 1), ("E5", 1), ("E5", 2),
+    ("E5", 1), ("G5", 1), ("C5", 1.5), ("D5", 0.5), ("E5", 4),
+    ("F5", 1), ("F5", 1), ("F5", 1.5), ("F5", 0.5),
+    ("F5", 1), ("E5", 1), ("E5", 1), ("E5", 0.5), ("E5", 0.5),
+    ("G5", 1), ("G5", 1), ("F5", 1), ("D5", 1), ("C5", 4),
+]
+
+try:
+    for name, beats in JINGLE:
+        play_note(name, beats)
+finally:
+    bz.duty_u16(0)          # always silence the buzzer, even after Stop
+</script>
+<p><code>try … finally</code> runs the <code>finally</code> block no matter how the <code>try</code> block ends — normally, by an error, or by pressing Stop.</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>PWM frequency = pitch; 50 % duty = loudest square wave; duty 0 = silence.</li>
+  <li>The equal-temperament formula and MIDI note numbers.</li>
+  <li>String slicing (<code>name[:-1]</code>, <code>name[-1]</code>), <code>list.index()</code>, <code>try/finally</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: an RTTTL ringtone player</h2>
+<p>Old mobile phones stored ringtones as <b>RTTTL</b> text. Thousands of melodies exist online in this format. Write <code>play_rtttl(text)</code> that plays strings like this:</p>
+<script type="text/x-output">
+Jingle:d=8,o=5,b=180:e,e,4e,e,e,4e,e,g,c.,16d,2e,f,f,f.,16f,f,e,e,16e,16e,e,d,d,e,4d,4g
+</script>
+<ul>
+  <li>Three sections separated by <code>:</code> — name, defaults, notes.</li>
+  <li>Defaults: <code>d</code> = default duration (4 = quarter note), <code>o</code> = default octave, <code>b</code> = beats (quarter notes) per minute.</li>
+  <li>Each note: optional duration (1, 2, 4, 8, 16, 32), the note letter (<code>a</code>–<code>g</code>, or <code>p</code> for pause), optional <code>#</code>, optional octave digit, optional <code>.</code> (dotted = 1.5× as long). Some files put the dot before the octave, e.g. <code>8c.6</code> — handle both.</li>
+  <li>A whole note lasts <code>4 × 60 / b</code> seconds; duration 8 lasts one eighth of that.</li>
+</ul>
+<details class="hint"><summary>Hint</summary>
+<p>Use <code>text.split(":")</code> and <code>split(",")</code>. Parse a note by walking through its characters: first collect digits (duration), then the letter, then check for <code>#</code>, <code>.</code> and a digit (octave). Reuse <code>note_freq()</code> by building a name like <code>"C#6"</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The parser reads each note from left to right with an index <code>i</code>. Because the dot may appear before or after the octave, we simply check for it in both places.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, PWM
+import time
+
+bz = PWM(Pin(15))
+bz.duty_u16(0)
+NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+def note_freq(name):
+    letter, octave = name[:-1], int(name[-1])
+    n = NAMES.index(letter) + 12 * (octave + 1)
+    return 440 * 2 ** ((n - 69) / 12)
+
+def play_rtttl(text):
+    name, defaults, notes = text.split(":")
+    d, o, b = 4, 6, 63                              # RTTTL standard defaults
+    for item in defaults.split(","):
+        key, value = item.strip().split("=")
+        if key == "d": d = int(value)
+        if key == "o": o = int(value)
+        if key == "b": b = int(value)
+    whole = 4 * 60 / b                              # seconds per whole note
+    print("Playing", name)
+
+    for note in notes.split(","):
+        note = note.strip().lower()
+        i = 0
+        num = ""
+        while i < len(note) and note[i].isdigit():  # duration
+            num += note[i]; i += 1
+        duration = int(num) if num else d
+        letter = note[i]; i += 1
+        sharp = i < len(note) and note[i] == "#"
+        if sharp: i += 1
+        dotted = False
+        if i < len(note) and note[i] == ".":
+            dotted = True; i += 1
+        octave = o
+        if i < len(note) and note[i].isdigit():
+            octave = int(note[i]); i += 1
+        if i < len(note) and note[i] == ".":
+            dotted = True
+
+        secs = whole / duration * (1.5 if dotted else 1)
+        if letter == "p":
+            bz.duty_u16(0)
+        else:
+            bz.freq(int(note_freq(letter.upper() + ("#" if sharp else "") + str(octave))))
+            bz.duty_u16(32768)
+        time.sleep(secs * 0.9)
+        bz.duty_u16(0)
+        time.sleep(secs * 0.1)
+
+try:
+    play_rtttl("Jingle:d=8,o=5,b=180:e,e,4e,e,e,4e,e,g,c.,16d,2e,f,f,f.,16f,f,e,e,16e,16e,e,d,d,e,4d,4g")
+finally:
+    bz.duty_u16(0)
+</script>
+<p>Search the web for "RTTTL Christmas" and paste in more songs. Note: <code>b#</code> or <code>e#</code> don't exist in <code>NAMES</code> — a real-world parser would need to handle such oddities.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

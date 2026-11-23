@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 4 · Rainbow Mixer</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="4">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 4</p>
+  <h1><span class="daynum">4</span>Rainbow Mixer</h1>
+  <p class="lede">Red, green and blue light can make (almost) any colour. Today you'll drive two RGB LEDs, write your first <b>class</b>, and turn colour wheels into code with the HSV colour model.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-016 RGB LED module</li>
+  <li>KY-009 SMD RGB LED module</li>
+  <li>3 × 220 Ω resistors</li>
+  <li>11 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>Both modules are <b>common cathode</b>: three LEDs (R, G, B) share one <b>−</b> pin. The <b>KY-016</b> has resistors on the board, so it connects directly. The tiny <b>KY-009</b> has none, so its three colours go through 220 Ω resistors.</p>
+<div class="warn"><p>Pin order differs between batches (e.g. <code>B G R −</code> or <code>− R G B</code>). Follow your labels. If your KY-016 has no resistors on the back (look for three tiny black rectangles), add resistors to it too.</p></div>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "rgb", "name": "KY-016 RGB LED", "col": 26, "pins": ["R", "G", "B", "-"], "icon": "rgb" },
+    { "id": "smd", "name": "KY-009 SMD RGB", "col": 46, "pins": ["R", "G", "B", "-"], "icon": "rgb" }
+  ],
+  "resistors": [
+    { "id": "R1", "col": 30 }, { "id": "R2", "col": 36 }, { "id": "R3", "col": 42 }
+  ],
+  "wires": [
+    { "from": "GP2", "to": "rgb.R", "color": "orange" },
+    { "from": "GP3", "to": "rgb.G", "color": "green" },
+    { "from": "GP4", "to": "rgb.B", "color": "blue" },
+    { "from": "rgb.-", "to": "-" },
+    { "from": "GP6", "to": "R1.a", "color": "pink" },
+    { "from": "R1.b", "to": "smd.R", "color": "pink" },
+    { "from": "GP7", "to": "R2.a", "color": "cyan" },
+    { "from": "R2.b", "to": "smd.G", "color": "cyan" },
+    { "from": "GP8", "to": "R3.a", "color": "purple" },
+    { "from": "R3.b", "to": "smd.B", "color": "purple" },
+    { "from": "smd.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Three PWM channels</h3>
+<p>One RGB LED is just three LEDs in one package, so we need three PWM outputs. Try the primary colours and their mixes:</p>
+<script type="text/x-python">
+from machine import Pin, PWM
+import time
+
+r, g, b = PWM(Pin(2)), PWM(Pin(3)), PWM(Pin(4))
+for ch in (r, g, b):
+    ch.freq(1000)
+
+def raw(red, green, blue):          # each 0..65535
+    r.duty_u16(red); g.duty_u16(green); b.duty_u16(blue)
+
+raw(65535, 0, 0);     time.sleep(1)   # red
+raw(0, 65535, 0);     time.sleep(1)   # green
+raw(0, 0, 65535);     time.sleep(1)   # blue
+raw(65535, 65535, 0); time.sleep(1)   # red + green = yellow
+raw(0, 65535, 65535); time.sleep(1)   # green + blue = cyan
+raw(65535, 0, 65535); time.sleep(1)   # red + blue = magenta
+raw(65535, 65535, 65535)              # all = white(ish)
+</script>
+
+<h3>2. A class for an RGB LED</h3>
+<p>We have <i>two</i> RGB LEDs, so instead of copying functions we create a <b>class</b> — a blueprint. Each object made from it remembers its own three pins (stored on <code>self</code>). The colour is given the way web designers do: three numbers from 0 to 255.</p>
+<script type="text/x-python">
+class RGBLed:
+    def __init__(self, pin_r, pin_g, pin_b):
+        self.ch = [PWM(Pin(p)) for p in (pin_r, pin_g, pin_b)]
+        for c in self.ch:
+            c.freq(1000)
+        self.off()
+
+    def color(self, red, green, blue):
+        """0..255 per channel, gamma-corrected"""
+        for c, v in zip(self.ch, (red, green, blue)):
+            c.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+    def hex(self, code):
+        """'#ff8800' style colours"""
+        code = code.lstrip("#")
+        self.color(int(code[0:2], 16), int(code[2:4], 16), int(code[4:6], 16))
+
+    def off(self):
+        self.color(0, 0, 0)
+
+for c in (r, g, b):                 # release the pins used in cell 1
+    c.deinit()
+led1 = RGBLed(2, 3, 4)
+led2 = RGBLed(6, 7, 8)
+led1.hex("#ff8800")                 # orange
+led2.hex("#00ffaa")                 # mint
+</script>
+<p><code>** 2.2</code> is the standard gamma value for screens; it makes 128 look like "half as bright" instead of almost full. Google any colour picker, copy a hex code and try it!</p>
+
+<h3>3. HSV: thinking in colour wheels</h3>
+<p>RGB is awkward for rainbows. <b>HSV</b> describes a colour by <b>hue</b> (position on the colour wheel, 0–360°), <b>saturation</b> (0 = white, 1 = pure colour) and <b>value</b> (brightness). Walking the hue from 0 to 360 gives a rainbow. Here is the standard conversion:</p>
+<script type="text/x-python">
+def hsv_to_rgb(h, s=1.0, v=1.0):
+    """h in degrees 0..360, s and v 0..1 -> (r, g, b) 0..255"""
+    h = (h % 360) / 60
+    i = int(h)               # which sixth of the wheel
+    f = h - i                # how far into it
+    p, q, t = v * (1 - s), v * (1 - s * f), v * (1 - s * (1 - f))
+    r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
+    return int(r * 255), int(g * 255), int(b * 255)
+
+print(hsv_to_rgb(0), hsv_to_rgb(120), hsv_to_rgb(240), hsv_to_rgb(60))
+</script>
+<script type="text/x-output">
+(255, 0, 0) (0, 255, 0) (0, 0, 255) (255, 255, 0)
+</script>
+
+<h3>4. Rainbow!</h3>
+<p>The second LED runs 180° behind the first, so they always show <b>opposite</b> (complementary) colours.</p>
+<script type="text/x-python">
+try:
+    hue = 0
+    while True:
+        led1.color(*hsv_to_rgb(hue))
+        led2.color(*hsv_to_rgb(hue + 180))
+        hue = (hue + 1) % 360
+        time.sleep_ms(15)
+except KeyboardInterrupt:
+    led1.off(); led2.off()
+</script>
+<p>The <code>*</code> in <code>color(*hsv_to_rgb(hue))</code> "unpacks" the tuple <code>(r, g, b)</code> into three separate arguments.</p>
+
+<script type="text/x-python" data-title="Full program — day04 main.py">
+from machine import Pin, PWM
+import time
+
+class RGBLed:
+    def __init__(self, pin_r, pin_g, pin_b):
+        self.ch = [PWM(Pin(p)) for p in (pin_r, pin_g, pin_b)]
+        for c in self.ch:
+            c.freq(1000)
+        self.off()
+
+    def color(self, red, green, blue):
+        for c, v in zip(self.ch, (red, green, blue)):
+            c.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+    def hex(self, code):
+        code = code.lstrip("#")
+        self.color(int(code[0:2], 16), int(code[2:4], 16), int(code[4:6], 16))
+
+    def off(self):
+        self.color(0, 0, 0)
+
+def hsv_to_rgb(h, s=1.0, v=1.0):
+    h = (h % 360) / 60
+    i = int(h)
+    f = h - i
+    p, q, t = v * (1 - s), v * (1 - s * f), v * (1 - s * (1 - f))
+    r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
+    return int(r * 255), int(g * 255), int(b * 255)
+
+led1 = RGBLed(2, 3, 4)
+led2 = RGBLed(6, 7, 8)
+try:
+    hue = 0
+    while True:
+        led1.color(*hsv_to_rgb(hue))
+        led2.color(*hsv_to_rgb(hue + 180))
+        hue = (hue + 1) % 360
+        time.sleep_ms(15)
+except KeyboardInterrupt:
+    led1.off(); led2.off()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Additive colour mixing with an RGB LED (three PWM channels).</li>
+  <li>Classes: <code>__init__</code>, <code>self</code>, methods, and creating several objects from one class.</li>
+  <li>Hex colour codes, gamma 2.2, and the HSV colour model.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: Christmas colour crossfader</h2>
+<ol>
+  <li>Make a list of Christmas colours as hex codes, e.g. red <code>#ff0000</code>, gold <code>#ffaa00</code>, green <code>#00ff20</code>, icy blue <code>#40a0ff</code>, warm white <code>#ffd0a0</code>.</li>
+  <li>Add a method <code>fade_to(r, g, b, ms)</code> to the class that <b>smoothly</b> crossfades from the current colour to the new one over <code>ms</code> milliseconds. The LED must remember its current colour.</li>
+  <li>LED 1 cycles through the list forwards, LED 2 backwards. Each colour is held for 1 s, each fade takes 1.5 s.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Store <code>self.rgb = (r, g, b)</code> inside <code>color()</code>. A crossfade is <i>linear interpolation</i>: for <code>t</code> from 0 to 1, each channel is <code>start + (end - start) * t</code>. To fade two LEDs at the same time, write the fade as a loop in the main program that updates both LEDs each step.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>Fading both LEDs simultaneously means the loop must interpolate both at once, so <code>fade_to</code> is split into a helper <code>mix()</code> that calculates an in-between colour, and a module-level <code>fade_both()</code> that steps both LEDs together. The class still has a single-LED <code>fade_to()</code> for convenience.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, PWM
+import time
+
+class RGBLed:
+    def __init__(self, pin_r, pin_g, pin_b):
+        self.ch = [PWM(Pin(p)) for p in (pin_r, pin_g, pin_b)]
+        for c in self.ch:
+            c.freq(1000)
+        self.rgb = (0, 0, 0)
+        self.color(0, 0, 0)
+
+    def color(self, red, green, blue):
+        self.rgb = (red, green, blue)
+        for c, v in zip(self.ch, self.rgb):
+            c.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+    def fade_to(self, red, green, blue, ms):
+        start = self.rgb
+        steps = max(1, ms // 20)
+        for i in range(1, steps + 1):
+            self.color(*mix(start, (red, green, blue), i / steps))
+            time.sleep_ms(20)
+
+def mix(a, b, t):
+    return tuple(int(x + (y - x) * t) for x, y in zip(a, b))
+
+def parse(code):
+    code = code.lstrip("#")
+    return tuple(int(code[i:i + 2], 16) for i in (0, 2, 4))
+
+def fade_both(led_a, col_a, led_b, col_b, ms):
+    sa, sb = led_a.rgb, led_b.rgb
+    steps = max(1, ms // 20)
+    for i in range(1, steps + 1):
+        t = i / steps
+        led_a.color(*mix(sa, col_a, t))
+        led_b.color(*mix(sb, col_b, t))
+        time.sleep_ms(20)
+
+PALETTE = [parse(c) for c in ("#ff0000", "#ffaa00", "#00ff20", "#40a0ff", "#ffd0a0")]
+led1, led2 = RGBLed(2, 3, 4), RGBLed(6, 7, 8)
+
+try:
+    i = 0
+    while True:
+        fade_both(led1, PALETTE[i % len(PALETTE)],
+                  led2, PALETTE[-1 - i % len(PALETTE)], 1500)
+        time.sleep(1)
+        i += 1
+except KeyboardInterrupt:
+    led1.color(0, 0, 0); led2.color(0, 0, 0)
+</script>
+<p><code>PALETTE[-1 - i % len(PALETTE)]</code> walks the list backwards: Python allows negative indexes, where <code>-1</code> is the last element.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

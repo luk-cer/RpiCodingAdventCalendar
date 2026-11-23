@@ -233,3 +233,6 @@ footer.site { color: var(--muted); font-size: .85rem; text-align: center; margin
   details.solution > :not(summary) { display: block; }
   .cell pre { background: #f5f5f5; color: #000; }
 }
+
+.complete { margin: 2.5em 0 0; padding: 14px 18px; border-radius: 12px; background: var(--green-soft); border: 1px solid var(--line); }
+.muted { color: var(--muted); }

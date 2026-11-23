@@ -139,7 +139,18 @@
       "<a class='home' href='" + root + "index.html'>🎄 Calendar</a>" +
       (day === 0 ? "<a class='next' href='" + root + "days/day01.html'>Day 1 ▶</a>" : link(next, "Day " + (next ? next.n : "") + " ▶", "next")) +
       "</nav>";
-    document.querySelectorAll(".nav-slot").forEach((s) => (s.outerHTML = html));
+    const slots = document.querySelectorAll(".nav-slot");
+    slots.forEach((s, i) => {
+      let extra = "";
+      if (i === slots.length - 1 && slots.length > 1) {
+        const nx = day === 0 ? DAYS[0] : next;
+        extra = "<div class='complete'><b>🎉 " + (day === 0 ? "Setup complete!" : "Day " + day + " complete!") +
+          "</b> Leave today's circuit on the breadboard if you like — many parts come back later." +
+          (nx ? "<br>Tomorrow: <b>" + nx.title + "</b> <span class='muted'>(" + nx.parts + ")</span>" : "<br>That's the whole calendar. Merry Christmas! 🎄") +
+          "</div>";
+      }
+      s.outerHTML = extra + html;
+    });
     try {
       const k = "advent-opened";
       const opened = JSON.parse(localStorage.getItem(k) || "[]");

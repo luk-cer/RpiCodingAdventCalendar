@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 2 · Press the Button</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="2">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 2</p>
+  <h1><span class="daynum">2</span>Press the Button</h1>
+  <p class="lede">Yesterday the Pico only talked. Today it listens: a push button turns yesterday's traffic light into a pedestrian crossing. You'll meet inputs, edge detection and the infamous button "bounce".</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-004 Button module</li>
+  <li>LED Traffic Light module</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>The traffic light is wired exactly like Day 1. The button module needs three connections: <b>+</b> to 3.3 V, <b>−</b> to ground and <b>S</b> (signal) to GP16. The module contains a 10 kΩ resistor that holds the signal at a fixed level while the button is not pressed; pressing it pulls the signal to the opposite level.</p>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "tl", "name": "Traffic Light module", "col": 26, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" },
+    { "id": "btn", "name": "KY-004 Button", "col": 38, "pins": ["S", "+", "-"], "icon": "button" }
+  ],
+  "wires": [
+    { "from": "GP15", "to": "tl.R", "color": "orange" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow" },
+    { "from": "GP13", "to": "tl.G", "color": "green" },
+    { "from": "tl.GND", "to": "-" },
+    { "from": "GP16", "to": "btn.S", "color": "blue", "note": "button signal" },
+    { "from": "btn.+", "to": "+" },
+    { "from": "btn.-", "to": "-" }
+  ]
+}
+</script></div>
+<div class="note"><p>Two new things in this diagram: the <b>red</b> wire brings 3.3 V from the Pico's <code>3V3</code> pin to the top <b>+</b> rail, and a red "bridge" wire on the far right connects the top rail to the bottom one. From now on, any module can grab power from the nearest rail.</p></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Read the button</h3>
+<p><code>Pin.IN</code> makes GP16 an input. <code>value()</code> now <i>measures</i> the voltage: above about 2 V reads as <code>1</code>, below about 0.8 V as <code>0</code>. Run this, then press and hold the button and run it again.</p>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+button = Pin(16, Pin.IN)
+print(button.value())
+</script>
+
+<h3>2. Watch it live</h3>
+<p>A loop that prints 10 times a second lets you see the value change as you press. Stop it with the Stop button.</p>
+<script type="text/x-python">
+while True:
+    print(button.value())
+    time.sleep(0.1)
+</script>
+<p>On most KY-004 boards you'll see <code>1</code> when released and <code>0</code> when pressed (the resistor "pulls up", the button connects to ground). Some batches are wired the other way round. Instead of guessing, our program will simply <b>remember the idle value at start-up</b>: anything different means "pressed".</p>
+<script type="text/x-python">
+IDLE = button.value()          # read once while nobody touches the button
+
+def pressed():
+    return button.value() != IDLE
+
+print("Idle level is", IDLE)
+</script>
+
+<h3>3. Count presses — and discover bouncing</h3>
+<p>We want to react to the <b>moment</b> the button goes down (an <i>edge</i>), not to it <i>being</i> down. So we compare the current state with the previous one.</p>
+<script type="text/x-python">
+count = 0
+was_pressed = False
+while True:
+    now = pressed()
+    if now and not was_pressed:        # released -> pressed: a rising edge
+        count += 1
+        print("Presses:", count)
+    was_pressed = now
+</script>
+<p>Press slowly ten times. You'll probably see the counter jump by 2 or 3 sometimes! Mechanical contacts physically <b>bounce</b> for a few milliseconds, producing several tiny presses. The cure is <b>debouncing</b>: after an edge, ignore everything for a short time.</p>
+<script type="text/x-python">
+count = 0
+was_pressed = False
+last_change = time.ticks_ms()
+while True:
+    now = pressed()
+    if now != was_pressed and time.ticks_diff(time.ticks_ms(), last_change) > 50:
+        last_change = time.ticks_ms()
+        was_pressed = now
+        if now:
+            count += 1
+            print("Presses:", count)
+</script>
+<p><code>time.ticks_ms()</code> is a millisecond clock that keeps running. Always subtract two ticks values with <code>time.ticks_diff(new, old)</code> — it handles the moment the counter wraps around.</p>
+
+<h3>4. The pedestrian crossing</h3>
+<p>The traffic light now stays green for cars until someone presses the button. Then it runs one stop-cycle and goes back to green. While the light is red, the on-board LED blinks as the "walk" signal.</p>
+<script type="text/x-python">
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+walk = Pin("LED", Pin.OUT)
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def crossing():
+    show(0, 1, 0); time.sleep(1.5)        # yellow
+    show(1, 0, 0)                         # red: pedestrians walk
+    for _ in range(10):
+        walk.toggle(); time.sleep(0.4)
+    walk.off()
+    show(1, 1, 0); time.sleep(1)          # red + yellow
+    show(0, 0, 1)                         # green again
+</script>
+<p>The main loop just waits for a press. We add a minimum green time so one impatient person can't stop traffic forever.</p>
+<script type="text/x-python">
+MIN_GREEN_MS = 4000
+show(0, 0, 1)
+green_since = time.ticks_ms()
+while True:
+    if pressed():
+        print("Request!")
+        while time.ticks_diff(time.ticks_ms(), green_since) < MIN_GREEN_MS:
+            time.sleep_ms(10)             # wait for the minimum green time
+        crossing()
+        green_since = time.ticks_ms()
+    time.sleep_ms(10)
+</script>
+
+<script type="text/x-python" data-title="Full program — day02 main.py">
+from machine import Pin
+import time
+
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+walk = Pin("LED", Pin.OUT)
+button = Pin(16, Pin.IN)
+IDLE = button.value()
+MIN_GREEN_MS = 4000
+
+def pressed():
+    return button.value() != IDLE
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def crossing():
+    show(0, 1, 0); time.sleep(1.5)
+    show(1, 0, 0)
+    for _ in range(10):
+        walk.toggle(); time.sleep(0.4)
+    walk.off()
+    show(1, 1, 0); time.sleep(1)
+    show(0, 0, 1)
+
+show(0, 0, 1)
+green_since = time.ticks_ms()
+try:
+    while True:
+        if pressed():
+            while time.ticks_diff(time.ticks_ms(), green_since) < MIN_GREEN_MS:
+                time.sleep_ms(10)
+            crossing()
+            green_since = time.ticks_ms()
+        time.sleep_ms(10)
+except KeyboardInterrupt:
+    show(0, 0, 0); walk.off()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li><code>Pin(n, Pin.IN)</code> and <code>.value()</code> read a digital input.</li>
+  <li>A pull-up/pull-down resistor gives an input a defined idle level.</li>
+  <li>Edge detection (compare with the previous state) and debouncing (ignore changes for ~50 ms).</li>
+  <li><code>time.ticks_ms()</code> + <code>time.ticks_diff()</code> measure time without blocking.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: short press, long press, night mode</h2>
+<ol>
+  <li>Measure <b>how long</b> the button is held. A <b>short</b> press (under 1 second) requests the crossing as before.</li>
+  <li>A <b>long</b> press (1 second or more) toggles <b>night mode</b>: the yellow light blinks every 0.5 s and short presses are ignored. Another long press returns to normal green.</li>
+  <li>The blinking must not freeze the program — the button must still work while yellow blinks. That means <b>no</b> <code>time.sleep(0.5)</code> for blinking!</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Write a function <code>read_press()</code> that returns <code>None</code>, <code>"short"</code> or <code>"long"</code>: when it sees the button down, it waits until release and measures the duration with <code>ticks_ms</code>. For non-blocking blinking, remember when you last toggled and toggle again when 500 ms have passed.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p><code>read_press()</code> classifies a whole press after release; presses shorter than 30 ms are treated as bounce and ignored. The main loop runs every 10 ms and does a little bit of work each time (check the button, maybe toggle yellow) — this "never block" style is how almost all embedded programs are structured.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+walk = Pin("LED", Pin.OUT)
+button = Pin(16, Pin.IN)
+IDLE = button.value()
+
+def pressed():
+    return button.value() != IDLE
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def read_press():
+    """None if not pressed, otherwise 'short' or 'long' after release."""
+    if not pressed():
+        return None
+    t0 = time.ticks_ms()
+    while pressed():
+        time.sleep_ms(5)
+    held = time.ticks_diff(time.ticks_ms(), t0)
+    if held < 30:
+        return None                      # just bounce
+    return "long" if held >= 1000 else "short"
+
+def crossing():
+    show(0, 1, 0); time.sleep(1.5)
+    show(1, 0, 0)
+    for _ in range(10):
+        walk.toggle(); time.sleep(0.4)
+    walk.off()
+    show(1, 1, 0); time.sleep(1)
+    show(0, 0, 1)
+
+night = False
+last_blink = time.ticks_ms()
+show(0, 0, 1)
+while True:
+    p = read_press()
+    if p == "long":
+        night = not night
+        print("Night mode" if night else "Day mode")
+        show(0, 0, 0) if night else show(0, 0, 1)
+    elif p == "short" and not night:
+        crossing()
+
+    if night and time.ticks_diff(time.ticks_ms(), last_blink) >= 500:
+        yellow.toggle()
+        last_blink = time.ticks_ms()
+    time.sleep_ms(10)
+</script>
+<p>One limitation: <code>read_press()</code> only answers after you let go, so a long press doesn't switch modes until release. Can you change it so night mode switches the moment the 1-second mark is reached?</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

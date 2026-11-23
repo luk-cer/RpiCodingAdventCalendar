@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup · Before Day 1</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="0">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Before you start</p>
+  <h1><span class="daynum">0</span>Setup &amp; Safety</h1>
+  <p class="lede">Install MicroPython on your Pico W, get the Thonny editor running, and learn the handful of rules that keep your parts alive for all 24 days.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>What you need for the whole calendar</h2>
+<div class="grid2">
+  <div class="card">
+    <h3>In your box</h3>
+    <ul>
+      <li>Raspberry Pi Pico W (with headers soldered on)</li>
+      <li>AZ-Delivery 35-in-1 sensor kit (the KY-xxx modules)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Extras (cheap, but you'll need them)</h3>
+    <ul>
+      <li>Micro-USB <b>data</b> cable (some cables are charge-only!)</li>
+      <li>Full-size breadboard (830 holes) and ~20 male-to-male jumper wires</li>
+      <li>At least four <b>220 Ω resistors</b> (anything 150–330 Ω works)</li>
+      <li>A small magnet (a fridge magnet is fine) — Days 13 &amp; 14</li>
+      <li>Any TV / IR remote control — Day 22</li>
+      <li>A tea-light candle and an adult nearby — Day 17</li>
+    </ul>
+  </div>
+</div>
+
+<h2><span class="em">💾</span>1. Install MicroPython on the Pico W</h2>
+<ol>
+  <li>Download the latest <b>Pico W</b> firmware (<code>.uf2</code> file) from <a href="https://micropython.org/download/RPI_PICO_W/">micropython.org/download/RPI_PICO_W</a>. Make sure it's the <b>W</b> version — the plain Pico firmware has no Wi-Fi.</li>
+  <li>Hold down the white <b>BOOTSEL</b> button on the Pico and, while holding it, plug the USB cable into your computer. Release the button.</li>
+  <li>A USB drive called <code>RPI-RP2</code> appears. Drag the <code>.uf2</code> file onto it. The drive disappears and the Pico reboots — MicroPython is installed.</li>
+</ol>
+
+<h2><span class="em">🖥️</span>2. Install Thonny</h2>
+<ol>
+  <li>Download Thonny from <a href="https://thonny.org">thonny.org</a> (Windows, macOS, Linux).</li>
+  <li>Start it, then in the bottom-right corner click the interpreter name and choose <b>MicroPython (Raspberry Pi Pico)</b>.</li>
+  <li>The <b>Shell</b> at the bottom now shows <code>&gt;&gt;&gt;</code>. That's the Pico talking to you! Type this and press Enter:</li>
+</ol>
+<script type="text/x-python">
+print("Hello from the Pico W!")
+</script>
+<script type="text/x-output">
+Hello from the Pico W!
+</script>
+<p>Now try the on-board LED. The Pico W's LED is connected to the Wi-Fi chip, so it's addressed by the name <code>"LED"</code> instead of a GPIO number:</p>
+<script type="text/x-python">
+from machine import Pin
+led = Pin("LED", Pin.OUT)
+led.on()
+</script>
+<p>If the little green LED lights up, you're ready for Day 1. 🎉</p>
+
+<h2><span class="em">🗂️</span>3. How code runs on the Pico</h2>
+<ul>
+  <li><b>Shell / REPL</b>: type one line, it runs immediately. Perfect for trying things — this is how the "In [n]" cells on each day work best.</li>
+  <li><b>Run (F5)</b>: runs the file in the editor. Press <b>Stop</b> (red button, or Ctrl+C in the shell) to interrupt.</li>
+  <li><b>main.py</b>: if you save a file called <code>main.py</code> onto the Pico (<i>File → Save as → Raspberry Pi Pico</i>), it runs automatically at power-up, even without a computer.</li>
+  <li><b>View → Plotter</b>: if your program prints numbers, Thonny draws them as a live graph. Many days use this for sensor readings.</li>
+</ul>
+
+<h2><span class="em">📍</span>4. The Pico W pins</h2>
+<p>All diagrams in this calendar place the Pico the same way: USB on the left, pins in rows <code>c</code> and <code>h</code>. Pin labels are printed on the drawing (zoom in!). In code you always use the <b>GP number</b>, e.g. <code>Pin(15)</code> is GP15, which is physical pin 20.</p>
+<div class="breadboard"><script type="application/json">{ "modules": [], "wires": [] }</script></div>
+<div class="table-scroll"><table>
+  <tr><th>Pin name</th><th>What it is</th></tr>
+  <tr><td><code>GP0 … GP22</code></td><td>General-purpose input/output. All can do digital in/out and PWM.</td></tr>
+  <tr><td><code>GP26, GP27, GP28</code></td><td>Also <b>analog inputs</b> ADC0, ADC1, ADC2 — the only three pins that can measure voltages.</td></tr>
+  <tr><td><code>3V3</code> (pin 36)</td><td>3.3 V output. <b>This is what we power the sensor modules from.</b></td></tr>
+  <tr><td><code>GND</code></td><td>Ground (0 V). There are eight GND pins; they're all the same.</td></tr>
+  <tr><td><code>VBUS</code> (pin 40)</td><td>5 V straight from USB. Only used for the relay on Day 12.</td></tr>
+</table></div>
+
+<h2><span class="em">⚠️</span>5. Safety rules (read these!)</h2>
+<div class="warn">
+<ol>
+  <li><b>The Pico is a 3.3 V device.</b> Never connect 5 V (VBUS/VSYS) to a GPIO pin — it can destroy the chip. Power all modules from the <b>3V3</b> pin unless a day says otherwise.</li>
+  <li><b>Unplug USB while you change wiring.</b> A misplaced wire for a split second is the most common way to kill a board.</li>
+  <li><b>Never connect 3V3 directly to GND.</b> Double-check red and black wires before plugging in.</li>
+  <li><b>Follow the labels on your module</b>, not just the picture. The KY modules come in slightly different versions and the pin order (<code>S</code>, <code>+</code>, <code>−</code>) is not always the same. <code>S</code> = signal, <code>+</code> or <code>VCC</code> = 3.3 V, <code>−</code> or <code>G</code>/<code>GND</code> = ground.</li>
+  <li><b>LEDs without a built-in resistor need one</b> (220 Ω). The diagrams show where.</li>
+  <li><b>The relay module (Day 12) is for low voltages only.</b> Never connect mains electricity to it.</li>
+</ol>
+</div>
+
+<h2><span class="em">🧭</span>6. How each day works</h2>
+<ul>
+  <li><b>Wiring</b> — click <b>Next ▶</b> to build the circuit one part or wire at a time. The checklist below the drawing names every hole, e.g. <code>i21</code> = row i, column 21.</li>
+  <li><b>Code, step by step</b> — notebook-style cells, each explained. Type them in yourself (you learn far more than with copy &amp; paste), or use the <b>Copy</b> button.</li>
+  <li><b>Full program</b> — the gold-framed cell is everything in one file.</li>
+  <li><b>Exercise</b> — a harder challenge. Try it first! A hint and the full solution are hidden behind buttons.</li>
+</ul>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>
