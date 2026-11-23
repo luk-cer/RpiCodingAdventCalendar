@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 1 · Traffic Light</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="1">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 1</p>
+  <h1><span class="daynum">1</span>Traffic Light</h1>
+  <p class="lede">Your first real circuit: make three LEDs behave like a traffic light. Along the way you'll learn what a GPIO pin is, how to switch it on and off, and how to make the Pico wait.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<div class="note"><p>Haven't set up your Pico W yet? Do the <a href="day00.html">setup page</a> first — it takes about 10 minutes and you only need to do it once.</p></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Raspberry Pi Pico W + USB cable</li>
+  <li>Breadboard</li>
+  <li>LED Traffic Light module</li>
+  <li>5 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>The traffic light module already has a resistor for each LED on board, so we can connect it straight to the Pico. Each LED gets its own GPIO pin, and all three share one ground (GND) connection.</p>
+<div class="warn"><p><b>Always wire with the USB cable unplugged.</b> And always follow the labels printed on <i>your</i> module — pin order can differ between batches. The diagram shows <code>R Y G GND</code>; if yours says <code>GND R Y G</code>, just shift the wires accordingly.</p></div>
+
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "tl", "name": "Traffic Light module", "col": 30, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" }
+  ],
+  "wires": [
+    { "from": "GP15", "to": "tl.R", "color": "orange", "note": "red LED" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow", "note": "yellow LED" },
+    { "from": "GP13", "to": "tl.G", "color": "green", "note": "green LED" },
+    { "from": "tl.GND", "to": "-" }
+  ]
+}
+</script></div>
+
+<div class="tip"><p><b>How a breadboard works:</b> the five holes <code>a–e</code> in one column are connected to each other, and so are <code>f–j</code>. The long rails at the top and bottom are connected along their whole length. That's why a wire in <code>i21</code> is connected to the Pico pin sitting in <code>h21</code>.</p></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+<p>Open Thonny, make sure the bottom-right corner says <i>MicroPython (Raspberry Pi Pico)</i>, and type each cell into the <b>Shell</b> (the REPL) or into the editor and press <b>Run</b> (F5). Running cells one by one is the best way to see what each line does.</p>
+
+<h3>1. Say hello with the on-board LED</h3>
+<p>Every program starts by importing what it needs. <code>machine</code> is the MicroPython module that talks to the hardware; <code>Pin</code> represents one GPIO pin. The Pico W's little green LED is wired to the Wi-Fi chip, so instead of a number we use the special name <code>"LED"</code>.</p>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+led = Pin("LED", Pin.OUT)   # OUT = we want to drive this pin, not read it
+led.on()                    # the green LED next to the USB socket lights up
+</script>
+<p>Try <code>led.off()</code> and <code>led.toggle()</code> in the shell. <code>toggle()</code> flips the state — on becomes off and off becomes on.</p>
+
+<h3>2. Blink!</h3>
+<p><code>time.sleep(0.5)</code> pauses the program for half a second. A loop with <code>toggle()</code> and <code>sleep()</code> gives you the "Hello World" of electronics.</p>
+<script type="text/x-python">
+for i in range(10):         # 10 toggles = 5 blinks
+    led.toggle()
+    time.sleep(0.5)
+</script>
+
+<h3>3. Control the traffic light</h3>
+<p>Now the external LEDs. <code>Pin(15, Pin.OUT)</code> means <b>GP15</b> — the number is the GPIO number printed on the diagram, <i>not</i> the physical pin number (GP15 is physical pin 20). Setting the value to <code>1</code> puts 3.3&nbsp;V on the pin and current flows through the LED to GND; <code>0</code> switches it off.</p>
+<script type="text/x-python">
+red    = Pin(15, Pin.OUT)
+yellow = Pin(14, Pin.OUT)
+green  = Pin(13, Pin.OUT)
+
+red.value(1)       # red on
+time.sleep(1)
+red.value(0)       # red off
+green.value(1)     # green on
+</script>
+<p>If the wrong colour lights up, you swapped two wires — either move the wires or swap the numbers in the code. Both are fine!</p>
+
+<h3>4. A helper function</h3>
+<p>Writing three <code>.value()</code> lines for every state gets repetitive. A <b>function</b> bundles them up. <code>show(1, 0, 0)</code> now means "red on, yellow off, green off".</p>
+<script type="text/x-python">
+def show(r, y, g):
+    red.value(r)
+    yellow.value(y)
+    green.value(g)
+
+show(0, 1, 0)      # only yellow
+</script>
+
+<h3>5. The full traffic light cycle</h3>
+<p>A real (European) traffic light goes <b>red → red + yellow → green → yellow → red</b>. We loop forever with <code>while True:</code>. Pressing <b>Stop</b> in Thonny raises a <code>KeyboardInterrupt</code>; we catch it with <code>try/except</code> so we can switch all LEDs off neatly instead of leaving one glowing.</p>
+<script type="text/x-python">
+try:
+    while True:
+        show(1, 0, 0); time.sleep(3)     # red: stop
+        show(1, 1, 0); time.sleep(1)     # red + yellow: get ready
+        show(0, 0, 1); time.sleep(3)     # green: go
+        show(0, 1, 0); time.sleep(1)     # yellow: stop if you can
+except KeyboardInterrupt:
+    show(0, 0, 0)
+    print("Bye!")
+</script>
+
+<h3>Everything together</h3>
+<p>Save this as <code>main.py</code> on the Pico (<i>File → Save as → Raspberry Pi Pico</i>) and it will run automatically every time the Pico gets power — even from a phone charger.</p>
+<script type="text/x-python" data-title="Full program — day01 main.py">
+from machine import Pin
+import time
+
+red    = Pin(15, Pin.OUT)
+yellow = Pin(14, Pin.OUT)
+green  = Pin(13, Pin.OUT)
+
+def show(r, y, g):
+    red.value(r)
+    yellow.value(y)
+    green.value(g)
+
+try:
+    while True:
+        show(1, 0, 0); time.sleep(3)
+        show(1, 1, 0); time.sleep(1)
+        show(0, 0, 1); time.sleep(3)
+        show(0, 1, 0); time.sleep(1)
+except KeyboardInterrupt:
+    show(0, 0, 0)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li><code>Pin(n, Pin.OUT)</code> turns GPIO <i>n</i> into an output; <code>.value(1)</code>/<code>.value(0)</code>, <code>.on()</code>, <code>.off()</code>, <code>.toggle()</code> control it.</li>
+  <li>GPIO numbers (GP15) are different from physical pin numbers (20).</li>
+  <li><code>time.sleep(seconds)</code> pauses; functions remove repetition; <code>try/except KeyboardInterrupt</code> cleans up when you stop.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: data-driven traffic light with night mode</h2>
+<ol>
+  <li>Instead of four hard-coded <code>show(...)</code> lines, describe the cycle as a <b>list of tuples</b> <code>(r, y, g, seconds)</code> and loop over it. Adding a new phase should mean adding one line of data, not code.</li>
+  <li>After 3 full cycles, switch to <b>night mode</b>: the yellow light blinks (0.5 s on, 0.5 s off) 10 times, then normal operation starts again.</li>
+  <li>Bonus: make the on-board LED blink once at the start of every cycle so you can see the loop counting.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p><code>for r, y, g, secs in PHASES:</code> unpacks each tuple into four variables. Use a counter variable and the modulo operator <code>%</code> (or just an inner <code>for</code> loop) to know when 3 cycles have passed.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The whole cycle is now <b>data</b>. The <code>for _ in range(3)</code> loop runs three normal cycles, then the night-mode loop blinks yellow; the outer <code>while True</code> repeats everything forever. <code>_</code> is the conventional name for a loop variable you don't use.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+
+PHASES = [            # (red, yellow, green, seconds)
+    (1, 0, 0, 3),
+    (1, 1, 0, 1),
+    (0, 0, 1, 3),
+    (0, 1, 0, 1),
+]
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def flash_onboard():
+    led.on(); time.sleep(0.1); led.off()
+
+try:
+    while True:
+        for _ in range(3):                  # three normal cycles
+            flash_onboard()
+            for r, y, g, secs in PHASES:
+                show(r, y, g)
+                time.sleep(secs)
+        for _ in range(10):                 # night mode
+            show(0, 1, 0); time.sleep(0.5)
+            show(0, 0, 0); time.sleep(0.5)
+except KeyboardInterrupt:
+    show(0, 0, 0)
+</script>
+<p>Notice how easy it is now to build a different country's traffic light: the US sequence (no red + yellow phase) is just the same list without the second line.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>
