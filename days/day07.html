@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 7 · Shake the Snow Globe</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="7">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 7</p>
+  <h1><span class="daynum">7</span>Shake the Snow Globe</h1>
+  <p class="lede">Three modules in one go: a tilt switch, a shock (vibration) switch and a self-flashing 7-colour LED. You'll build a "snow globe" that lights up when you shake or tip it — and meet <b>interrupts</b>, the Pico's way of reacting instantly.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-020 Tilt switch</li>
+  <li>KY-002 Shock / vibration switch</li>
+  <li>KY-034 7-colour flashing LED</li>
+  <li>9 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Meet today's parts</h2>
+<div class="grid2">
+  <div class="card"><h3>KY-020 tilt switch</h3><p>A tiny metal ball rolls inside a can. Upright, the ball connects two contacts; tipped over, it rolls away and the connection opens.</p></div>
+  <div class="card"><h3>KY-002 shock switch</h3><p>A spring around a metal pin. A knock makes the spring wobble and briefly touch the pin — the pulses last only milliseconds, which is why we need interrupts.</p></div>
+</div>
+<p>The <b>KY-034</b> has a little chip inside the LED that cycles through colours on its own. We just switch its power on and off with a GPIO pin.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "tilt", "name": "KY-020 Tilt switch", "col": 26, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#b0bec5" },
+    { "id": "shock", "name": "KY-002 Shock switch", "col": 34, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#90a4ae" },
+    { "id": "rgb7", "name": "KY-034 7-colour LED", "col": 42, "pins": ["S", "mid", "-"], "icon": "rgb" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "tilt.S", "color": "blue", "note": "tilt signal" },
+    { "from": "tilt.+", "to": "+" },
+    { "from": "tilt.-", "to": "-" },
+    { "from": "GP17", "to": "shock.S", "color": "purple", "note": "shock signal" },
+    { "from": "shock.+", "to": "+" },
+    { "from": "shock.-", "to": "-" },
+    { "from": "GP15", "to": "rgb7.S", "color": "yellow", "note": "LED power" },
+    { "from": "rgb7.-", "to": "-" }
+  ]
+}
+</script></div>
+<div class="note"><p>The KY-034's middle pin isn't needed. If it doesn't flash, check which outer pin is marked <b>S</b> — the LED only works one way round.</p></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Test each part</h3>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+tilt  = Pin(16, Pin.IN)
+shock = Pin(17, Pin.IN)
+light = Pin(15, Pin.OUT)
+
+light.on()                  # watch the colours change by themselves
+for _ in range(50):
+    print("tilt:", tilt.value(), " shock:", shock.value())
+    time.sleep(0.1)
+light.off()
+</script>
+<p>Tip the breadboard while it runs: the tilt value changes and stays changed. Now tap the table hard: the shock value probably <b>never</b> changes in the printout! The pulse is so short that it happens between two of our readings. Polling every 100 ms misses it.</p>
+
+<h3>2. Interrupts</h3>
+<p>An <b>interrupt</b> (IRQ) asks the hardware to watch the pin for us. When the voltage changes, MicroPython pauses whatever the program is doing, calls our <b>handler</b> function, then carries on. We'll count every shock this way.</p>
+<script type="text/x-python">
+shakes = 0
+last_shake = 0
+
+def on_shock(pin):
+    global shakes, last_shake
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_shake) > 80:     # one knock = many tiny pulses
+        shakes += 1
+        last_shake = now
+
+shock.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=on_shock)
+
+for _ in range(10):
+    print("shakes so far:", shakes)
+    time.sleep(1)
+</script>
+<ul>
+  <li><code>global</code> lets the handler change variables defined outside it.</li>
+  <li>We watch <b>both</b> edges, so it works whether your module idles high or low.</li>
+  <li>Handlers should be short and fast: count, remember a time, done. No printing, no sleeping.</li>
+</ul>
+
+<h3>3. Which way is up?</h3>
+<p>Like the button on Day 2, we remember the tilt switch's value at start-up (with the breadboard lying flat) and treat anything different as "tipped".</p>
+<script type="text/x-python">
+UPRIGHT = tilt.value()
+
+def tipped():
+    return tilt.value() != UPRIGHT
+</script>
+<p>If your switch reads "tipped" while flat, it may be mounted the other way — just stand the module up or bend it gently so the can points up.</p>
+
+<h3>4. The snow globe</h3>
+<p>Shaking lights the globe for 3 seconds; every new shake extends the time. Tipping it over keeps it lit as long as it's tipped. The main loop only compares times — no long sleeps.</p>
+<script type="text/x-python">
+GLOW_MS = 3000
+seen = 0
+glow_until = time.ticks_ms()
+
+while True:
+    if shakes != seen:                                # new shakes since last loop?
+        seen = shakes
+        glow_until = time.ticks_add(time.ticks_ms(), GLOW_MS)
+        print("Shake! total:", shakes)
+    lit = tipped() or time.ticks_diff(glow_until, time.ticks_ms()) > 0
+    light.value(lit)
+    time.sleep_ms(20)
+</script>
+<p><code>time.ticks_add(t, ms)</code> calculates a future tick value safely; <code>ticks_diff(future, now) &gt; 0</code> means "the future hasn't arrived yet".</p>
+
+<script type="text/x-python" data-title="Full program — day07 main.py">
+from machine import Pin
+import time
+
+tilt  = Pin(16, Pin.IN)
+shock = Pin(17, Pin.IN)
+light = Pin(15, Pin.OUT)
+UPRIGHT = tilt.value()
+GLOW_MS = 3000
+
+shakes = 0
+last_shake = 0
+
+def on_shock(pin):
+    global shakes, last_shake
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_shake) > 80:
+        shakes += 1
+        last_shake = now
+
+shock.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=on_shock)
+
+seen = 0
+glow_until = time.ticks_ms()
+try:
+    while True:
+        if shakes != seen:
+            seen = shakes
+            glow_until = time.ticks_add(time.ticks_ms(), GLOW_MS)
+            print("Shake! total:", shakes)
+        tipped = tilt.value() != UPRIGHT
+        light.value(tipped or time.ticks_diff(glow_until, time.ticks_ms()) > 0)
+        time.sleep_ms(20)
+except KeyboardInterrupt:
+    light.off()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Polling misses short events; interrupts (<code>pin.irq(...)</code>) catch them.</li>
+  <li>Interrupt handlers must be short; use <code>global</code> to share data with the main loop.</li>
+  <li><code>ticks_add</code> for deadlines; combining conditions with <code>or</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: shake to wake</h2>
+<p>Make the globe harder to wake up — like a magic spell:</p>
+<ol>
+  <li>The light only switches on after <b>5 shakes within 2 seconds</b>. Fewer, or slower, shakes do nothing.</li>
+  <li>Once on, it stays on for 10 seconds, then switches off.</li>
+  <li>Turning the globe <b>upside down</b> (tilt) switches it off immediately and resets everything.</li>
+  <li>Print a little progress bar like <code>***..</code> as shakes add up.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Keep a <b>list of timestamps</b> of recent shakes. Each time a new shake arrives, append <code>ticks_ms()</code> and throw away entries older than 2 seconds. If the list has 5 or more entries, wake up.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The handler still only counts. The main loop turns new counts into timestamps and keeps a "sliding window" of the last 2 seconds using a list comprehension.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+tilt  = Pin(16, Pin.IN)
+shock = Pin(17, Pin.IN)
+light = Pin(15, Pin.OUT)
+UPRIGHT = tilt.value()
+NEEDED, WINDOW_MS, ON_MS = 5, 2000, 10000
+
+shakes = 0
+last_shake = 0
+
+def on_shock(pin):
+    global shakes, last_shake
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_shake) > 80:
+        shakes += 1
+        last_shake = now
+
+shock.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=on_shock)
+
+seen = 0
+recent = []          # timestamps of recent shakes
+awake_until = None
+
+while True:
+    now = time.ticks_ms()
+    while seen < shakes:                    # turn new shakes into timestamps
+        seen += 1
+        recent.append(now)
+    recent = [t for t in recent if time.ticks_diff(now, t) < WINDOW_MS]
+
+    if tilt.value() != UPRIGHT:             # upside down: off and reset
+        if awake_until or recent:
+            print("Upside down - sleeping")
+        awake_until = None
+        recent = []
+    elif awake_until is None and recent:
+        print("*" * len(recent) + "." * (NEEDED - len(recent)))
+        if len(recent) >= NEEDED:
+            print("✨ Awake!")
+            awake_until = time.ticks_add(now, ON_MS)
+            recent = []
+
+    if awake_until is not None and time.ticks_diff(awake_until, now) <= 0:
+        awake_until = None
+        print("Back to sleep")
+
+    light.value(awake_until is not None)
+    time.sleep_ms(50)
+</script>
+<p>The progress bar prints every loop while shakes are in the window; for a cleaner output, print only when <code>len(recent)</code> changes.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 10 · Digital Thermometer</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="10">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 10</p>
+  <h1><span class="daynum">10</span>Digital Thermometer</h1>
+  <p class="lede">The DS18B20 does all the maths itself and simply <i>tells</i> the Pico the temperature over a single data wire. You'll meet your first communication protocol, 1-Wire, and compare it with yesterday's thermistor.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-001 DS18B20 temperature sensor</li>
+  <li>KY-012 Active buzzer (from Day 5)</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Meet the DS18B20</h2>
+<p>It looks like a transistor, but inside is a complete digital thermometer: accurate to ±0.5 °C, with up to 0.0625 °C resolution. It speaks <b>1-Wire</b>: power, ground and one data line that carries messages in both directions. Every DS18B20 has a unique 64-bit serial number burnt in at the factory, so many of them can share the same wire. The KY-001 already has the required 4.7 kΩ pull-up resistor on board.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "ds", "name": "KY-001 DS18B20", "col": 28, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#111" },
+    { "id": "bz", "name": "KY-012 Active buzzer", "col": 38, "pins": ["S", "+", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP22", "to": "ds.S", "color": "blue", "note": "1-Wire data" },
+    { "from": "ds.+", "to": "+" },
+    { "from": "ds.-", "to": "-" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.+", "to": "+" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+<div class="warn"><p>If the sensor gets <b>hot</b> to the touch, unplug immediately — it's connected backwards. Check the <b>+</b>/<b>−</b>/<b>S</b> labels on your module.</p></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Find sensors on the bus</h3>
+<p>MicroPython has the drivers built in. <code>OneWire</code> handles the low-level protocol on a pin, <code>DS18X20</code> knows the thermometer's commands. <code>scan()</code> asks "who's there?" and returns a list of serial numbers (ROM codes).</p>
+<script type="text/x-python">
+from machine import Pin
+import onewire, ds18x20, time
+
+bus = onewire.OneWire(Pin(22))
+ds = ds18x20.DS18X20(bus)
+roms = ds.scan()
+print("Found", len(roms), "sensor(s)")
+for rom in roms:
+    print(rom.hex())
+</script>
+<script type="text/x-output">
+Found 1 sensor(s)
+28ff641e8216037c
+</script>
+<p>The first byte <code>28</code> is the family code meaning "DS18B20". If you get <code>Found 0</code>, check the wiring.</p>
+
+<h3>2. Measure</h3>
+<p>Reading the temperature is two steps: tell all sensors to <b>start converting</b>, wait until they're done (up to 750 ms at full resolution), then <b>read</b> each one.</p>
+<script type="text/x-python">
+rom = roms[0]
+ds.convert_temp()
+time.sleep_ms(750)
+print(ds.read_temp(rom), "°C")
+</script>
+
+<h3>3. Live readings</h3>
+<script type="text/x-python">
+for _ in range(20):
+    ds.convert_temp()
+    time.sleep_ms(750)
+    print("{:.2f}".format(ds.read_temp(rom)))
+</script>
+<p>Hold the sensor between your fingers and watch the plotter. Compare with the KY-013 yesterday: the DS18B20 reacts a little slower (its plastic package needs to warm up) but its readings are much steadier.</p>
+
+<h3>4. Resolution vs. speed</h3>
+<p>The DS18B20 can measure with 9, 10, 11 or 12 bits. Fewer bits = coarser steps but faster conversions. The setting lives in the sensor's <b>scratchpad</b> memory, byte 4. Let's see the difference:</p>
+<script type="text/x-python">
+CONFIG = {9: 0x1F, 10: 0x3F, 11: 0x5F, 12: 0x7F}
+WAIT_MS = {9: 94, 10: 188, 11: 375, 12: 750}
+
+def set_resolution(bits):
+    ds.write_scratch(rom, bytearray([0, 0, CONFIG[bits]]))   # TH, TL, config
+
+for bits in (9, 10, 11, 12):
+    set_resolution(bits)
+    ds.convert_temp()
+    time.sleep_ms(WAIT_MS[bits])
+    print(bits, "bits:", ds.read_temp(rom))
+</script>
+<script type="text/x-output">
+9 bits: 22.5
+10 bits: 22.75
+11 bits: 22.625
+12 bits: 22.6875
+</script>
+<p>9 bits gives 0.5 °C steps, 12 bits 0.0625 °C steps. The setting isn't saved permanently, so after a power cycle the sensor is back to 12 bits.</p>
+
+<h3>5. Too-hot alarm</h3>
+<p>A simple watchdog: if the temperature passes a limit, beep. Hold the sensor to test it (set <code>LIMIT</code> a degree or two above room temperature).</p>
+<script type="text/x-python">
+buzzer = Pin(15, Pin.OUT)
+LIMIT = 27.0
+set_resolution(12)
+
+while True:
+    ds.convert_temp()
+    time.sleep_ms(750)
+    t = ds.read_temp(rom)
+    print("{:.2f}".format(t))
+    if t > LIMIT:
+        buzzer.on(); time.sleep_ms(80); buzzer.off()
+</script>
+
+<script type="text/x-python" data-title="Full program — day10 main.py">
+from machine import Pin
+import onewire, ds18x20, time
+
+LIMIT = 27.0
+buzzer = Pin(15, Pin.OUT)
+ds = ds18x20.DS18X20(onewire.OneWire(Pin(22)))
+roms = ds.scan()
+if not roms:
+    raise SystemExit("No DS18B20 found - check wiring")
+
+try:
+    while True:
+        ds.convert_temp()
+        time.sleep_ms(750)
+        for i, rom in enumerate(roms):
+            t = ds.read_temp(rom)
+            print("sensor {}: {:.2f} °C".format(i, t))
+            if t > LIMIT:
+                buzzer.on(); time.sleep_ms(80); buzzer.off()
+except KeyboardInterrupt:
+    buzzer.off()
+</script>
+<p>The program handles any number of sensors: plug in a second DS18B20 on the same data wire and it will appear automatically.</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Digital sensors and the 1-Wire bus; unique ROM addresses.</li>
+  <li><code>onewire</code>, <code>ds18x20</code>, <code>scan()</code>, <code>convert_temp()</code>, <code>read_temp()</code>.</li>
+  <li>The trade-off between resolution and speed; writing configuration to a sensor.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: a "fever thermometer" that knows when it's done</h2>
+<p>A medical thermometer beeps when the reading has stopped changing. Build one:</p>
+<ol>
+  <li>Wait until someone grabs the sensor: the temperature rises at least 1 °C above the starting value. Print "Measuring…".</li>
+  <li>Keep the last 6 readings. When the difference between the highest and lowest of them is at most 0.1 °C, the reading is <b>stable</b>: beep three times and print the result.</li>
+  <li>Then wait until the sensor has cooled back below start + 0.5 °C before allowing a new measurement.</li>
+  <li>Use 11-bit resolution to make it a bit quicker.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Structure it as a <b>state machine</b> with a variable <code>state</code> that is <code>"idle"</code>, <code>"measuring"</code> or <code>"cooling"</code>. Each loop iteration does one reading and decides whether to switch state.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>Each state only looks for the one condition that moves it to the next state. This pattern scales well: adding a "too cold to measure" state, for example, would just be another branch.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import onewire, ds18x20, time
+
+buzzer = Pin(15, Pin.OUT)
+ds = ds18x20.DS18X20(onewire.OneWire(Pin(22)))
+rom = ds.scan()[0]
+ds.write_scratch(rom, bytearray([0, 0, 0x5F]))     # 11 bits
+
+def read():
+    ds.convert_temp()
+    time.sleep_ms(375)
+    return ds.read_temp(rom)
+
+def beep(n):
+    for _ in range(n):
+        buzzer.on(); time.sleep_ms(100); buzzer.off(); time.sleep_ms(100)
+
+start = read()
+print("Room temperature: {:.2f} °C - grab the sensor!".format(start))
+state = "idle"
+recent = []
+
+while True:
+    t = read()
+    if state == "idle":
+        if t > start + 1.0:
+            print("Measuring...")
+            state, recent = "measuring", []
+    elif state == "measuring":
+        recent.append(t)
+        recent = recent[-6:]
+        print("  {:.2f}".format(t))
+        if len(recent) == 6 and max(recent) - min(recent) <= 0.1:
+            print("Result: {:.1f} °C".format(sum(recent) / 6))
+            beep(3)
+            state = "cooling"
+    elif state == "cooling":
+        if t < start + 0.5:
+            print("Ready for the next measurement")
+            state = "idle"
+</script>
+<p>Body heat through fingers takes a minute or more to stabilise — real thermometers use clever prediction to finish sooner. Could you predict the final value from the shape of the curve?</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

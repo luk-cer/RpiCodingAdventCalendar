@@ -39,13 +39,13 @@
     { "id": "R1" }, { "id": "R2" }, { "id": "R3" }, { "id": "R4" }
   ],
   "wires": [
-    { "from": "GP10", "to": "R1.a", "color": "orange" },
+    { "from": "GP16", "to": "R1.a", "color": "orange" },
     { "from": "R1.b", "to": "big.R", "color": "orange" },
-    { "from": "GP11", "to": "R2.a", "color": "green" },
+    { "from": "GP17", "to": "R2.a", "color": "green" },
     { "from": "R2.b", "to": "big.G", "color": "green" },
-    { "from": "GP12", "to": "R3.a", "color": "pink" },
+    { "from": "GP18", "to": "R3.a", "color": "pink" },
     { "from": "R3.b", "to": "small.R", "color": "pink" },
-    { "from": "GP13", "to": "R4.a", "color": "cyan" },
+    { "from": "GP19", "to": "R4.a", "color": "cyan" },
     { "from": "R4.b", "to": "small.G", "color": "cyan" },
     { "from": "big.-", "to": "-" },
     { "from": "small.-", "to": "-" }
@@ -61,7 +61,7 @@
 from machine import Pin, PWM
 import time
 
-for gp in (10, 11, 12, 13):
+for gp in (16, 17, 18, 19):
     p = Pin(gp, Pin.OUT)
     p.on(); time.sleep(0.5); p.off()
 </script>
@@ -69,7 +69,7 @@ for gp in (10, 11, 12, 13):
 <h3>2. What is PWM?</h3>
 <p><b>Pulse Width Modulation</b> switches a pin on and off very fast — here 1000 times per second. Your eye can't see the flicker and just sees the <i>average</i>. If the pin is on 25 % of each cycle (the <b>duty cycle</b>), the LED looks dimmer. In MicroPython the duty cycle is a number from <code>0</code> (always off) to <code>65535</code> (always on).</p>
 <script type="text/x-python">
-big_r = PWM(Pin(10))
+big_r = PWM(Pin(16))
 big_r.freq(1000)          # 1000 cycles per second
 big_r.duty_u16(65535)     # 100 % - full brightness
 time.sleep(1)
@@ -102,8 +102,8 @@ def pwm(gp):
     p.duty_u16(0)
     return p
 
-big   = (pwm(10), pwm(11))      # (red, green) of KY-011
-small = (pwm(12), pwm(13))      # (red, green) of KY-029
+big   = (pwm(16), pwm(17))      # (red, green) of KY-011
+small = (pwm(18), pwm(19))      # (red, green) of KY-029
 
 def mix(led, red, green):
     """red, green from 0.0 to 1.0"""
@@ -149,8 +149,8 @@ def mix(led, red, green):
     led[0].duty_u16(level(red))
     led[1].duty_u16(level(green))
 
-big   = (pwm(10), pwm(11))
-small = (pwm(12), pwm(13))
+big   = (pwm(16), pwm(17))
+small = (pwm(18), pwm(19))
 
 try:
     while True:
@@ -196,8 +196,8 @@ def level(x):
     return int(65535 * x * x)
 
 candles = [
-    {"led": (pwm(10), pwm(11)), "b": 0.8, "target": 0.8},
-    {"led": (pwm(12), pwm(13)), "b": 0.8, "target": 0.8},
+    {"led": (pwm(16), pwm(17)), "b": 0.8, "target": 0.8},
+    {"led": (pwm(18), pwm(19)), "b": 0.8, "target": 0.8},
 ]
 last_gutter = time.ticks_ms()
 

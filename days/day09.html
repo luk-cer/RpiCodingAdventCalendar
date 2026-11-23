@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 9 · Thermistor Thermometer</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="9">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 9</p>
+  <h1><span class="daynum">9</span>Thermistor Thermometer</h1>
+  <p class="lede">A thermistor is a resistor that changes with temperature. With yesterday's voltage-divider trick and one famous equation, you'll turn an ADC reading into degrees Celsius — and show "cold / cosy / warm" on the traffic light.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-013 Analog temperature sensor</li>
+  <li>LED Traffic Light module (from Day 1)</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>The NTC thermistor</h2>
+<p>The KY-013 contains an <b>NTC</b> ("negative temperature coefficient") thermistor: when it gets <b>warmer</b>, its resistance goes <b>down</b>. At 25 °C it is 10 kΩ. Together with a fixed 10 kΩ resistor on the board it forms a voltage divider, just like the LDR yesterday.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "ntc", "name": "KY-013 Analog temp", "col": 26, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#212121" },
+    { "id": "tl", "name": "Traffic Light module", "col": 36, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" }
+  ],
+  "wires": [
+    { "from": "GP26", "to": "ntc.S", "color": "white", "note": "analog input ADC0" },
+    { "from": "ntc.+", "to": "+" },
+    { "from": "ntc.-", "to": "-" },
+    { "from": "GP15", "to": "tl.R", "color": "orange" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow" },
+    { "from": "GP13", "to": "tl.G", "color": "green" },
+    { "from": "tl.GND", "to": "-" }
+  ]
+}
+</script></div>
+<div class="note"><p>Known quirk: on many KY-013 boards the <b>+</b> and <b>−</b> labels are swapped. That doesn't damage anything here — it just flips the divider. Step 2 below detects which way round yours is.</p></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Read the ratio</h3>
+<p>We don't actually need volts. Because the divider is powered from the same 3.3 V that the ADC uses as its reference, the reading as a <b>fraction of full scale</b> is all we need (and the exact supply voltage cancels out).</p>
+<script type="text/x-python">
+from machine import ADC, Pin
+import time, math
+
+adc = ADC(26)
+
+def ratio(n=16):
+    return sum(adc.read_u16() for _ in range(n)) / n / 65535
+
+print(ratio())
+</script>
+
+<h3>2. Which way round is the divider?</h3>
+<p>Run this loop and hold the black thermistor bead between your fingers for 10 seconds.</p>
+<script type="text/x-python">
+for _ in range(40):
+    print(round(ratio(), 4))
+    time.sleep(0.25)
+</script>
+<p>If the number goes <b>up</b> when warm, the thermistor sits on the <b>top</b> of the divider (between + and S). If it goes <b>down</b>, it's on the bottom.</p>
+<script type="text/x-python">
+NTC_ON_TOP = True        # False if the number went DOWN when you warmed it
+R_FIXED = 10000         # the fixed resistor on the module (ohms)
+</script>
+
+<h3>3. Ratio → resistance</h3>
+<p>The divider formula for the output fraction is <code>ratio = R_bottom / (R_top + R_bottom)</code>. Solving for the thermistor's resistance:</p>
+<script type="text/x-python">
+def ntc_resistance():
+    x = ratio()
+    x = min(max(x, 0.001), 0.999)            # avoid division by zero
+    if NTC_ON_TOP:
+        return R_FIXED * (1 - x) / x
+    return R_FIXED * x / (1 - x)
+
+print(round(ntc_resistance()), "ohm")        # about 10000 at 25 °C
+</script>
+
+<h3>4. Resistance → temperature: the Beta equation</h3>
+<p>Thermistors follow a curve described by the <b>Beta equation</b>: <code>1/T = 1/T0 + ln(R/R0) / B</code>, with temperatures in <b>Kelvin</b>. For this sensor R0 = 10 kΩ at T0 = 25 °C (298.15 K), and B ≈ 3950.</p>
+<script type="text/x-python">
+R0, T0, BETA = 10000, 298.15, 3950
+
+def temperature():
+    r = ntc_resistance()
+    inv_t = 1 / T0 + math.log(r / R0) / BETA
+    return 1 / inv_t - 273.15                 # Kelvin -> Celsius
+
+print("{:.1f} °C".format(temperature()))
+</script>
+<p>It won't be lab-accurate — the parts have a few percent tolerance — but within a degree or two is typical. If it's off by a constant amount compared to a room thermometer, add an <code>OFFSET</code>.</p>
+
+<h3>5. Cosy-meter on the traffic light</h3>
+<p>Green below 26 °C, yellow from 26, red from 30. Warm the sensor with your fingers (or breathe on it) to climb up the scale.</p>
+<script type="text/x-python">
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+while True:
+    t = temperature()
+    print("{:.2f}".format(t))                 # plotter-friendly
+    if t >= 30:
+        show(1, 0, 0)
+    elif t >= 26:
+        show(0, 1, 0)
+    else:
+        show(0, 0, 1)
+    time.sleep(0.5)
+</script>
+
+<script type="text/x-python" data-title="Full program — day09 main.py">
+from machine import ADC, Pin
+import time, math
+
+NTC_ON_TOP = True
+R_FIXED, R0, T0, BETA = 10000, 10000, 298.15, 3950
+OFFSET = 0.0
+
+adc = ADC(26)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+
+def ratio(n=16):
+    return sum(adc.read_u16() for _ in range(n)) / n / 65535
+
+def temperature():
+    x = min(max(ratio(), 0.001), 0.999)
+    r = R_FIXED * (1 - x) / x if NTC_ON_TOP else R_FIXED * x / (1 - x)
+    return 1 / (1 / T0 + math.log(r / R0) / BETA) - 273.15 + OFFSET
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+try:
+    while True:
+        t = temperature()
+        print("{:.2f}".format(t))
+        show(t >= 30, 26 <= t < 30, t < 26)
+        time.sleep(0.5)
+except KeyboardInterrupt:
+    show(0, 0, 0)
+</script>
+<p>Note the compact <code>show(t &gt;= 30, 26 &lt;= t &lt; 30, t &lt; 26)</code>: comparisons give <code>True</code>/<code>False</code>, which <code>Pin.value()</code> accepts like 1 and 0.</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>NTC thermistors; ratiometric measurements; solving the divider equation.</li>
+  <li>The Beta equation, natural logarithm <code>math.log</code>, Kelvin vs Celsius.</li>
+  <li>Chained comparisons like <code>26 &lt;= t &lt; 30</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: "Someone is touching me!" alarm</h2>
+<p>A thermometer that notices <i>change</i>:</p>
+<ol>
+  <li>Track the <b>minimum</b> and <b>maximum</b> temperature since start-up and print them every 5 seconds.</li>
+  <li>Calculate the <b>rate of change</b> in °C per second over the last 5 seconds. If it rises faster than 0.15 °C/s, flash the red LED quickly ("touch detected!"). If it falls faster than 0.15 °C/s, flash yellow ("cooling down").</li>
+  <li>Otherwise show steady green.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Sample every 0.25 s and keep the last 20 readings in a list (<code>history.append(t)</code>, then <code>history.pop(0)</code> if it grows too long). Rate = <code>(history[-1] - history[0]) / 5</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The list <code>history</code> acts as a 5-second <b>ring buffer</b>. Comparing newest and oldest readings gives a slope that's much less noisy than comparing two neighbouring readings.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import ADC, Pin
+import time, math
+
+NTC_ON_TOP = True
+R_FIXED, R0, T0, BETA = 10000, 10000, 298.15, 3950
+SAMPLE_S, WINDOW = 0.25, 20               # 20 x 0.25 s = 5 s
+THRESHOLD = 0.15                          # °C per second
+
+adc = ADC(26)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+
+def temperature():
+    x = sum(adc.read_u16() for _ in range(16)) / 16 / 65535
+    x = min(max(x, 0.001), 0.999)
+    r = R_FIXED * (1 - x) / x if NTC_ON_TOP else R_FIXED * x / (1 - x)
+    return 1 / (1 / T0 + math.log(r / R0) / BETA) - 273.15
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+history = []
+t_min = t_max = temperature()
+last_report = time.ticks_ms()
+blink = False
+
+while True:
+    t = temperature()
+    t_min, t_max = min(t_min, t), max(t_max, t)
+    history.append(t)
+    if len(history) > WINDOW:
+        history.pop(0)
+
+    rate = 0
+    if len(history) == WINDOW:
+        rate = (history[-1] - history[0]) / (WINDOW * SAMPLE_S)
+
+    blink = not blink
+    if rate > THRESHOLD:
+        show(blink, 0, 0)
+    elif rate < -THRESHOLD:
+        show(0, blink, 0)
+    else:
+        show(0, 0, 1)
+
+    if time.ticks_diff(time.ticks_ms(), last_report) > 5000:
+        last_report = time.ticks_ms()
+        print("now {:.1f}  min {:.1f}  max {:.1f}  rate {:+.2f} °C/s".format(t, t_min, t_max, rate))
+    time.sleep(SAMPLE_S)
+</script>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

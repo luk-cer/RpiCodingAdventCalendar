@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 8 · Night Light</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="8">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 8</p>
+  <h1><span class="daynum">8</span>Night Light</h1>
+  <p class="lede">So far every input was just 0 or 1. Today the Pico measures <i>how much</i>: a light-dependent resistor tells it how bright the room is, and the RGB LED from Day 4 becomes a cosy night light that fades in as it gets dark.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-018 Photoresistor (LDR)</li>
+  <li>KY-016 RGB LED (from Day 4)</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How the LDR works</h2>
+<p>A <b>light-dependent resistor</b> has high resistance in the dark (around 1 MΩ) and low resistance in bright light (a few kΩ). The module puts it in series with a fixed 10 kΩ resistor — a <b>voltage divider</b>. The voltage in the middle, on pin <b>S</b>, moves between 0 and 3.3 V as the light changes. We measure that voltage with the Pico's <b>ADC</b> (analog-to-digital converter) on GP26.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "ldr", "name": "KY-018 Photoresistor", "col": 26, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#d84315" },
+    { "id": "rgb", "name": "KY-016 RGB LED", "col": 36, "pins": ["R", "G", "B", "-"], "icon": "rgb" }
+  ],
+  "wires": [
+    { "from": "GP26", "to": "ldr.S", "color": "white", "note": "analog input ADC0" },
+    { "from": "ldr.+", "to": "+" },
+    { "from": "ldr.-", "to": "-" },
+    { "from": "GP2", "to": "rgb.R", "color": "orange" },
+    { "from": "GP3", "to": "rgb.G", "color": "green" },
+    { "from": "GP4", "to": "rgb.B", "color": "blue" },
+    { "from": "rgb.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Your first analog reading</h3>
+<p><code>ADC(26)</code> reads GP26. <code>read_u16()</code> returns 0 for 0 V up to 65535 for 3.3 V. (The Pico's ADC really has 12 bits = 4096 steps; MicroPython scales it up to 16 bits so all boards look the same.)</p>
+<script type="text/x-python">
+from machine import ADC, Pin, PWM
+import time
+
+ldr = ADC(26)
+raw = ldr.read_u16()
+print(raw, "=", round(raw * 3.3 / 65535, 2), "V")
+</script>
+
+<h3>2. Watch it in the plotter</h3>
+<p>Turn on <b>View → Plotter</b> in Thonny and run this. Cover the sensor with your hand, then shine a phone torch on it.</p>
+<script type="text/x-python">
+for _ in range(200):
+    print(ldr.read_u16())
+    time.sleep(0.05)
+</script>
+<p>Does the number go <b>up</b> or <b>down</b> when you cover it? That depends on which way round the divider is built on your board — both exist! Set this constant to match what you saw:</p>
+<script type="text/x-python">
+DARK_IS_HIGH = True      # set to False if covering the sensor made the number go DOWN
+</script>
+
+<h3>3. Smoothing out the noise</h3>
+<p>The plot is a bit jittery — electrical noise and flickering room lights. Two cures: average several readings, and blend each new value into a running average (an <b>exponential moving average</b>). <code>ALPHA</code> = 0.1 means "trust the new reading 10 %".</p>
+<script type="text/x-python">
+def read_avg(n=8):
+    return sum(ldr.read_u16() for _ in range(n)) / n
+
+def darkness():
+    """0.0 = bright, 1.0 = dark"""
+    v = read_avg() / 65535
+    return v if DARK_IS_HIGH else 1 - v
+
+ALPHA = 0.1
+smooth = darkness()
+for _ in range(100):
+    smooth += ALPHA * (darkness() - smooth)
+    print(round(smooth, 3))
+    time.sleep(0.05)
+</script>
+
+<h3>4. Map darkness to brightness</h3>
+<p>Your room has its own range: maybe darkness goes from 0.15 (lamp on) to 0.7 (hand over sensor). We <b>map</b> that range onto LED brightness 0…1 and clamp values outside it. Try the readings from your plot for <code>BRIGHT_ROOM</code> and <code>DARK_ROOM</code>.</p>
+<script type="text/x-python">
+BRIGHT_ROOM = 0.2     # darkness value when the room is bright
+DARK_ROOM   = 0.7     # darkness value when it's dark
+
+def map_range(x, in_lo, in_hi, out_lo=0.0, out_hi=1.0):
+    t = (x - in_lo) / (in_hi - in_lo)
+    t = max(0.0, min(1.0, t))                 # clamp
+    return out_lo + t * (out_hi - out_lo)
+
+print(map_range(0.45, BRIGHT_ROOM, DARK_ROOM))   # half way -> 0.5
+</script>
+
+<h3>5. The night light</h3>
+<p>A warm candle colour (lots of red, some green, a little blue), scaled by how dark it is.</p>
+<script type="text/x-python">
+r, g, b = PWM(Pin(2)), PWM(Pin(3)), PWM(Pin(4))
+for ch in (r, g, b):
+    ch.freq(1000)
+
+WARM = (255, 120, 30)
+
+def set_rgb(red, green, blue):
+    for ch, v in zip((r, g, b), (red, green, blue)):
+        ch.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+while True:
+    smooth += ALPHA * (darkness() - smooth)
+    level = map_range(smooth, BRIGHT_ROOM, DARK_ROOM)
+    set_rgb(*(c * level for c in WARM))
+    time.sleep(0.05)
+</script>
+
+<script type="text/x-python" data-title="Full program — day08 main.py">
+from machine import ADC, Pin, PWM
+import time
+
+DARK_IS_HIGH = True
+BRIGHT_ROOM, DARK_ROOM = 0.2, 0.7
+ALPHA = 0.1
+WARM = (255, 120, 30)
+
+ldr = ADC(26)
+r, g, b = PWM(Pin(2)), PWM(Pin(3)), PWM(Pin(4))
+for ch in (r, g, b):
+    ch.freq(1000)
+
+def darkness():
+    v = sum(ldr.read_u16() for _ in range(8)) / 8 / 65535
+    return v if DARK_IS_HIGH else 1 - v
+
+def map_range(x, in_lo, in_hi, out_lo=0.0, out_hi=1.0):
+    t = max(0.0, min(1.0, (x - in_lo) / (in_hi - in_lo)))
+    return out_lo + t * (out_hi - out_lo)
+
+def set_rgb(red, green, blue):
+    for ch, v in zip((r, g, b), (red, green, blue)):
+        ch.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+smooth = darkness()
+try:
+    while True:
+        smooth += ALPHA * (darkness() - smooth)
+        level = map_range(smooth, BRIGHT_ROOM, DARK_ROOM)
+        set_rgb(*(c * level for c in WARM))
+        time.sleep(0.05)
+except KeyboardInterrupt:
+    set_rgb(0, 0, 0)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Voltage dividers turn a changing resistance into a changing voltage.</li>
+  <li><code>ADC(26).read_u16()</code>; only GP26, GP27, GP28 are analog inputs.</li>
+  <li>Averaging and exponential smoothing; mapping and clamping ranges.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: self-calibrating light with a logbook</h2>
+<ol>
+  <li>Hard-coded <code>BRIGHT_ROOM</code>/<code>DARK_ROOM</code> values break when you move the Pico to another room. Make the program <b>learn</b> them: remember the smallest and largest darkness ever seen and map between those. Ignore the first second so the start-up value doesn't fix the range.</li>
+  <li>Add <b>hysteresis</b>: the light switches on only when the level goes above 0.6 and off only when it drops below 0.4. In between it keeps its previous state (no flickering at dusk).</li>
+  <li>Every 10 seconds, append a line <code>seconds,darkness,light_on</code> to a file <code>light_log.csv</code> on the Pico. Open it in Thonny afterwards (<i>View → Files</i>).</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p><code>lo = min(lo, smooth)</code> and <code>hi = max(hi, smooth)</code>. Guard against <code>hi - lo</code> being tiny (division by almost zero) — require at least 0.05 difference before mapping. For the file: <code>with open("light_log.csv", "a") as f: f.write(...)</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The program now has <b>state</b> (<code>lo</code>, <code>hi</code>, <code>is_on</code>) that it updates over time. Writing to flash with <code>"a"</code> (append) mode adds lines to the end; we log only every 10 s because flash memory wears out if written constantly.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import ADC, Pin, PWM
+import time
+
+DARK_IS_HIGH = True
+WARM = (255, 120, 30)
+ldr = ADC(26)
+r, g, b = PWM(Pin(2)), PWM(Pin(3)), PWM(Pin(4))
+for ch in (r, g, b):
+    ch.freq(1000)
+
+def darkness():
+    v = sum(ldr.read_u16() for _ in range(8)) / 8 / 65535
+    return v if DARK_IS_HIGH else 1 - v
+
+def set_rgb(red, green, blue):
+    for ch, v in zip((r, g, b), (red, green, blue)):
+        ch.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+start = time.ticks_ms()
+smooth = darkness()
+lo = hi = None
+is_on = False
+last_log = start
+
+while True:
+    smooth += 0.1 * (darkness() - smooth)
+    now = time.ticks_ms()
+
+    if time.ticks_diff(now, start) > 1000:              # learn the range
+        lo = smooth if lo is None else min(lo, smooth)
+        hi = smooth if hi is None else max(hi, smooth)
+
+    if lo is not None and hi - lo > 0.05:
+        level = (smooth - lo) / (hi - lo)
+        if level > 0.6:
+            is_on = True
+        elif level < 0.4:
+            is_on = False
+        brightness = level if is_on else 0
+    else:
+        level, brightness = 0, 0                          # not calibrated yet
+    set_rgb(*(c * brightness for c in WARM))
+
+    if time.ticks_diff(now, last_log) >= 10000:
+        last_log = now
+        secs = time.ticks_diff(now, start) // 1000
+        with open("light_log.csv", "a") as f:
+            f.write("{},{:.3f},{}\n".format(secs, smooth, int(is_on)))
+        print("logged", secs, round(smooth, 3), is_on)
+    time.sleep(0.05)
+</script>
+<p>Cover and uncover the sensor once after starting so it learns the full range. Could you also save <code>lo</code> and <code>hi</code> to a file so it remembers them after a restart?</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

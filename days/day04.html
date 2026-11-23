@@ -39,15 +39,15 @@
     { "id": "R1", "col": 30 }, { "id": "R2", "col": 36 }, { "id": "R3", "col": 42 }
   ],
   "wires": [
-    { "from": "GP2", "to": "rgb.R", "color": "orange" },
-    { "from": "GP3", "to": "rgb.G", "color": "green" },
-    { "from": "GP4", "to": "rgb.B", "color": "blue" },
+    { "from": "GP10", "to": "rgb.R", "color": "orange" },
+    { "from": "GP11", "to": "rgb.G", "color": "green" },
+    { "from": "GP12", "to": "rgb.B", "color": "blue" },
     { "from": "rgb.-", "to": "-" },
-    { "from": "GP6", "to": "R1.a", "color": "pink" },
+    { "from": "GP20", "to": "R1.a", "color": "pink" },
     { "from": "R1.b", "to": "smd.R", "color": "pink" },
-    { "from": "GP7", "to": "R2.a", "color": "cyan" },
+    { "from": "GP21", "to": "R2.a", "color": "cyan" },
     { "from": "R2.b", "to": "smd.G", "color": "cyan" },
-    { "from": "GP8", "to": "R3.a", "color": "purple" },
+    { "from": "GP22", "to": "R3.a", "color": "purple" },
     { "from": "R3.b", "to": "smd.B", "color": "purple" },
     { "from": "smd.-", "to": "-" }
   ]
@@ -62,7 +62,7 @@
 from machine import Pin, PWM
 import time
 
-r, g, b = PWM(Pin(2)), PWM(Pin(3)), PWM(Pin(4))
+r, g, b = PWM(Pin(10)), PWM(Pin(11)), PWM(Pin(12))
 for ch in (r, g, b):
     ch.freq(1000)
 
@@ -103,8 +103,8 @@ class RGBLed:
 
 for c in (r, g, b):                 # release the pins used in cell 1
     c.deinit()
-led1 = RGBLed(2, 3, 4)
-led2 = RGBLed(6, 7, 8)
+led1 = RGBLed(10, 11, 12)
+led2 = RGBLed(20, 21, 22)
 led1.hex("#ff8800")                 # orange
 led2.hex("#00ffaa")                 # mint
 </script>
@@ -173,8 +173,8 @@ def hsv_to_rgb(h, s=1.0, v=1.0):
     r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
     return int(r * 255), int(g * 255), int(b * 255)
 
-led1 = RGBLed(2, 3, 4)
-led2 = RGBLed(6, 7, 8)
+led1 = RGBLed(10, 11, 12)
+led2 = RGBLed(20, 21, 22)
 try:
     hue = 0
     while True:
@@ -246,7 +246,7 @@ def fade_both(led_a, col_a, led_b, col_b, ms):
         time.sleep_ms(20)
 
 PALETTE = [parse(c) for c in ("#ff0000", "#ffaa00", "#00ff20", "#40a0ff", "#ffd0a0")]
-led1, led2 = RGBLed(2, 3, 4), RGBLed(6, 7, 8)
+led1, led2 = RGBLed(10, 11, 12), RGBLed(20, 21, 22)
 
 try:
     i = 0

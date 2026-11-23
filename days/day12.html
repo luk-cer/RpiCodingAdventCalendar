@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 12 · Click! The Thermostat</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="12">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 12</p>
+  <h1><span class="daynum">12</span>Click! The Thermostat</h1>
+  <p class="lede">Halfway there! Today the Pico switches something with a real mechanical <b>relay</b> — click! — and you'll build the same control logic as the thermostat on your radiator, including the trick that stops it clicking on and off a hundred times a minute.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-028 Digital temperature sensor (red board)</li>
+  <li>KY-019 Relay module</li>
+  <li>KY-034 7-colour LED (our pretend "heater")</li>
+  <li>11 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Meet today's parts</h2>
+<div class="grid2">
+  <div class="card"><h3>KY-019 relay</h3><p>An electromagnet that pulls a metal switch. A tiny signal from the Pico switches a completely separate circuit connected to the screw terminals: <b>COM</b> (common) is connected to <b>NC</b> (normally closed) when off, and to <b>NO</b> (normally open) when the relay is on.</p></div>
+  <div class="card"><h3>KY-028 temperature sensor</h3><p>An NTC thermistor (like Day 9) plus a <b>comparator</b> chip. <b>AO</b> gives the analog divider voltage; <b>DO</b> switches between 0 and 1 when the temperature crosses a threshold you set with the blue potentiometer.</p></div>
+</div>
+<div class="warn">
+<p><b>Low voltage only!</b> The relay is rated for mains voltage, but never connect it to anything plugged into a wall socket. In this calendar it only ever switches 3.3 V.</p>
+<p>The relay coil needs <b>5 V</b>, so its <b>+</b> goes to <b>VBUS</b> (pin 40), not the 3.3 V rail. Its signal pin is safe for the Pico. Only VBUS — never connect 5 V to a GPIO.</p>
+</div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "temp", "name": "KY-028 Digital temp", "col": 24, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "pot" },
+    { "id": "relay", "name": "KY-019 Relay", "col": 34, "pins": ["S", "+", "-"], "icon": "relay", "width": 7, "terminals": ["NO", "COM", "NC"] },
+    { "id": "heat", "name": "KY-034 7-colour LED", "col": 44, "pins": ["S", "mid", "-"], "icon": "rgb" }
+  ],
+  "wires": [
+    { "from": "GP26", "to": "temp.AO", "color": "white", "note": "analog temperature" },
+    { "from": "temp.G", "to": "-" },
+    { "from": "temp.+", "to": "+" },
+    { "from": "GP16", "to": "temp.DO", "color": "blue", "note": "comparator output" },
+    { "from": "GP15", "to": "relay.S", "color": "yellow", "note": "relay control" },
+    { "from": "VBUS", "to": "relay.+", "color": "red", "note": "5 V for the relay coil" },
+    { "from": "relay.-", "to": "-" },
+    { "from": "relay.COM", "to": "+", "color": "red", "note": "3.3 V into the switch" },
+    { "from": "relay.NO", "to": "heat.S", "color": "orange", "note": "switched output" },
+    { "from": "heat.-", "to": "-" }
+  ]
+}
+</script></div>
+<p>Follow the current: 3.3 V from the rail goes into <b>COM</b>; when the relay clicks on, it comes out of <b>NO</b> and powers the 7-colour LED. The Pico never touches the LED directly — that's the point of a relay.</p>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Click!</h3>
+<script type="text/x-python">
+from machine import Pin, ADC
+import time, math
+
+relay = Pin(15, Pin.OUT)
+for _ in range(3):
+    relay.on();  time.sleep(1)       # click - LED flashes colours
+    relay.off(); time.sleep(1)       # clack - LED off
+</script>
+<p>You should hear the click and see the little red LED on the relay board. If the relay is <i>on</i> when the pin is off, you have an "active-low" version: swap <code>on()</code> and <code>off()</code> throughout.</p>
+
+<h3>2. Temperature from AO</h3>
+<p>Same divider maths as Day 9. Warm the thermistor with your fingers to check the direction, and set <code>NTC_ON_TOP</code> accordingly.</p>
+<script type="text/x-python">
+adc = ADC(26)
+NTC_ON_TOP = False       # True if the reading went DOWN when you warmed it
+R_FIXED, R0, T0, BETA = 10000, 10000, 298.15, 3950
+
+def temperature():
+    x = sum(adc.read_u16() for _ in range(16)) / 16 / 65535
+    x = min(max(x, 0.001), 0.999)
+    r = R_FIXED * (1 - x) / x if NTC_ON_TOP else R_FIXED * x / (1 - x)
+    return 1 / (1 / T0 + math.log(r / R0) / BETA) - 273.15
+
+for _ in range(10):
+    print("{:.2f}".format(temperature()))
+    time.sleep(0.5)
+</script>
+<div class="note"><p>On the KY-028 the analog value often goes <i>down</i> as it warms — the opposite of many KY-013 boards. If the temperature moves the wrong way when you warm it, flip <code>NTC_ON_TOP</code>.</p></div>
+
+<h3>3. The naive thermostat (and its problem)</h3>
+<p>"Heat if colder than 25 °C" sounds simple:</p>
+<script type="text/x-python">
+TARGET = 25.0
+for _ in range(60):
+    t = temperature()
+    relay.value(t < TARGET)
+    print("{:.2f}".format(t), "HEAT" if t < TARGET else "-")
+    time.sleep(0.2)
+</script>
+<p>Hold the sensor so it sits right at 25 °C. Noise makes the reading wobble around the target and the relay chatters — click-clack-click. Real heaters, fridges and pumps would wear out quickly.</p>
+
+<h3>4. Hysteresis</h3>
+<p>The fix is a <b>dead band</b>: switch on below 24.5 °C, switch off above 25.5 °C, and in between <b>keep doing whatever you were doing</b>. That memory is called hysteresis.</p>
+<script type="text/x-python">
+BAND = 0.5
+heating = False
+
+def thermostat(t):
+    global heating
+    if t < TARGET - BAND:
+        heating = True
+    elif t > TARGET + BAND:
+        heating = False
+    return heating           # unchanged inside the band
+</script>
+
+<h3>5. Hardware backup: the comparator</h3>
+<p>The KY-028's DO pin is a thermostat in hardware! Turn the blue potentiometer slowly until the small LED on the board just switches; now DO changes when the temperature crosses that point, with no software involved. We'll print it alongside.</p>
+<script type="text/x-python">
+do_pin = Pin(16, Pin.IN)
+print("Comparator output:", do_pin.value())
+</script>
+
+<script type="text/x-python" data-title="Full program — day12 main.py">
+from machine import Pin, ADC
+import time, math
+
+TARGET, BAND = 25.0, 0.5
+NTC_ON_TOP = False
+R_FIXED, R0, T0, BETA = 10000, 10000, 298.15, 3950
+
+relay = Pin(15, Pin.OUT)
+do_pin = Pin(16, Pin.IN)
+adc = ADC(26)
+heating = False
+
+def temperature():
+    x = sum(adc.read_u16() for _ in range(16)) / 16 / 65535
+    x = min(max(x, 0.001), 0.999)
+    r = R_FIXED * (1 - x) / x if NTC_ON_TOP else R_FIXED * x / (1 - x)
+    return 1 / (1 / T0 + math.log(r / R0) / BETA) - 273.15
+
+def thermostat(t):
+    global heating
+    if t < TARGET - BAND:
+        heating = True
+    elif t > TARGET + BAND:
+        heating = False
+    return heating
+
+try:
+    while True:
+        t = temperature()
+        relay.value(thermostat(t))
+        print("{:.2f} °C  heater {}  comparator {}".format(t, "ON " if heating else "off", do_pin.value()))
+        time.sleep(0.5)
+except KeyboardInterrupt:
+    relay.off()
+</script>
+<p>Set <code>TARGET</code> about 2 °C above room temperature. Pinch the sensor — the "heater" switches off once you've warmed it past the band; let go and it clicks back on as it cools.</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Relays: COM/NO/NC, coil vs contacts, galvanic separation.</li>
+  <li>Comparators: a threshold decision made in hardware.</li>
+  <li>Hysteresis — the most important idea in on/off control.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: a thermostat that protects its hardware</h2>
+<ol>
+  <li><b>Minimum run times:</b> once switched on, the heater must stay on for at least 5 s; once off, it must stay off for at least 5 s — no matter what the temperature does. (Real compressors need this.)</li>
+  <li><b>Safety cut-off:</b> use the comparator DO pin as an independent over-temperature alarm. Set the potentiometer to trigger a little above <code>TARGET</code>. When it fires, switch off immediately (ignoring the minimum on-time) and blink the on-board LED until it's cool again.</li>
+  <li>Print the reason for every switch, e.g. <code>ON  (23.9 °C below band)</code>, <code>OFF (safety cut-off!)</code>.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Record <code>last_switch = ticks_ms()</code> whenever the relay changes. The thermostat proposes a new state; you only accept it if enough time has passed. Find out which DO level means "too hot" by warming the sensor and watching the module's LED.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The logic is layered: safety first (it overrides everything), then the minimum-time rule, then normal hysteresis control. Keeping each rule in its own clearly ordered <code>if</code> makes it easy to reason about.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, ADC
+import time, math
+
+TARGET, BAND = 25.0, 0.5
+MIN_MS = 5000
+HOT_LEVEL = 0               # DO level that means "too hot" on your board (check it!)
+NTC_ON_TOP = False
+R_FIXED, R0, T0, BETA = 10000, 10000, 298.15, 3950
+
+relay = Pin(15, Pin.OUT)
+do_pin = Pin(16, Pin.IN)
+led = Pin("LED", Pin.OUT)
+adc = ADC(26)
+
+def temperature():
+    x = sum(adc.read_u16() for _ in range(16)) / 16 / 65535
+    x = min(max(x, 0.001), 0.999)
+    r = R_FIXED * (1 - x) / x if NTC_ON_TOP else R_FIXED * x / (1 - x)
+    return 1 / (1 / T0 + math.log(r / R0) / BETA) - 273.15
+
+heating = False
+last_switch = time.ticks_add(time.ticks_ms(), -MIN_MS)   # allow switching right away
+
+def switch(on, reason):
+    global heating, last_switch
+    if on != heating:
+        heating = on
+        relay.value(on)
+        last_switch = time.ticks_ms()
+        print(("ON  " if on else "OFF ") + "(" + reason + ")")
+
+while True:
+    t = temperature()
+    held = time.ticks_diff(time.ticks_ms(), last_switch)
+
+    if do_pin.value() == HOT_LEVEL:                      # 1. safety
+        switch(False, "safety cut-off!")
+        led.toggle()
+    else:
+        led.off()
+        if held >= MIN_MS:                               # 2. minimum time
+            if t < TARGET - BAND:                        # 3. hysteresis
+                switch(True, "{:.1f} °C below band".format(t))
+            elif t > TARGET + BAND:
+                switch(False, "{:.1f} °C above band".format(t))
+    time.sleep(0.25)
+</script>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

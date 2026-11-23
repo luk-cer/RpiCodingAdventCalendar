@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 11 · Temperature &amp; Humidity</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="11">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 11</p>
+  <h1><span class="daynum">11</span>Temperature &amp; Humidity</h1>
+  <p class="lede">The little blue DHT11 measures temperature <i>and</i> how much water is in the air. You'll build a room-comfort meter on the traffic light and learn to handle sensors that sometimes fail to answer.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-015 DHT11 temperature &amp; humidity sensor</li>
+  <li>LED Traffic Light module</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Meet the DHT11</h2>
+<p>Inside the blue grille is a humidity-sensitive layer and a thermistor, plus a small chip that sends the results over one data wire using its own timing-based protocol. It is cheap and slow: one reading per second at most, ±2 °C and ±5 % relative humidity (RH). <b>Relative humidity</b> means: how full of water vapour is the air compared with the maximum it could hold at this temperature? Indoors, 40–60 % feels comfortable.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "dht", "name": "KY-015 DHT11", "col": 26, "pins": ["S", "+", "-"], "icon": "dht" },
+    { "id": "tl", "name": "Traffic Light module", "col": 36, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "dht.S", "color": "blue", "note": "DHT data" },
+    { "from": "dht.+", "to": "+" },
+    { "from": "dht.-", "to": "-" },
+    { "from": "GP15", "to": "tl.R", "color": "orange" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow" },
+    { "from": "GP13", "to": "tl.G", "color": "green" },
+    { "from": "tl.GND", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. First reading</h3>
+<p>MicroPython's built-in <code>dht</code> module does the tricky timing. <code>measure()</code> triggers a reading; then <code>temperature()</code> and <code>humidity()</code> return the values.</p>
+<script type="text/x-python">
+from machine import Pin
+import dht, time
+
+sensor = dht.DHT11(Pin(16))
+time.sleep(1)                 # the DHT11 needs a moment after power-up
+sensor.measure()
+print(sensor.temperature(), "°C", sensor.humidity(), "% RH")
+</script>
+
+<h3>2. When sensors fail</h3>
+<p>Sometimes the DHT11 doesn't answer correctly (a bit got lost, or you asked too quickly). <code>measure()</code> then raises an <code>OSError</code>. Instead of crashing, we <b>catch</b> the error and try again.</p>
+<script type="text/x-python">
+def read_dht(retries=3):
+    for attempt in range(retries):
+        try:
+            sensor.measure()
+            return sensor.temperature(), sensor.humidity()
+        except OSError as e:
+            print("read failed:", e)
+            time.sleep(1)
+    return None                     # gave up
+
+print(read_dht())
+</script>
+
+<h3>3. Watch your breath</h3>
+<p>Run this and breathe gently onto the sensor. Humidity shoots up and slowly falls back as the sensor dries.</p>
+<script type="text/x-python">
+for _ in range(30):
+    print(read_dht())
+    time.sleep(1)                  # never faster than once per second
+</script>
+
+<h3>4. Comfort rules</h3>
+<p>We combine both values into one verdict. Writing it as a function that <b>returns</b> a word (instead of switching LEDs directly) keeps the logic testable — you can call <code>comfort(21, 50)</code> in the shell and check the answer.</p>
+<script type="text/x-python">
+def comfort(t, h):
+    if 19 <= t <= 24 and 40 <= h <= 60:
+        return "cosy"
+    if 16 <= t <= 27 and 30 <= h <= 70:
+        return "ok"
+    return "uncomfortable"
+
+print(comfort(21, 50), comfort(25, 35), comfort(30, 80))
+</script>
+<script type="text/x-output">
+cosy ok uncomfortable
+</script>
+
+<h3>5. Comfort meter</h3>
+<script type="text/x-python">
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+LIGHTS = {"cosy": (0, 0, 1), "ok": (0, 1, 0), "uncomfortable": (1, 0, 0)}
+
+while True:
+    reading = read_dht()
+    if reading:
+        t, h = reading
+        verdict = comfort(t, h)
+        r, y, g = LIGHTS[verdict]
+        red.value(r); yellow.value(y); green.value(g)
+        print("{} °C  {} %  -> {}".format(t, h, verdict))
+    time.sleep(2)
+</script>
+
+<script type="text/x-python" data-title="Full program — day11 main.py">
+from machine import Pin
+import dht, time
+
+sensor = dht.DHT11(Pin(16))
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+LIGHTS = {"cosy": (0, 0, 1), "ok": (0, 1, 0), "uncomfortable": (1, 0, 0)}
+
+def read_dht(retries=3):
+    for _ in range(retries):
+        try:
+            sensor.measure()
+            return sensor.temperature(), sensor.humidity()
+        except OSError:
+            time.sleep(1)
+    return None
+
+def comfort(t, h):
+    if 19 <= t <= 24 and 40 <= h <= 60:
+        return "cosy"
+    if 16 <= t <= 27 and 30 <= h <= 70:
+        return "ok"
+    return "uncomfortable"
+
+time.sleep(1)
+while True:
+    reading = read_dht()
+    if reading:
+        t, h = reading
+        verdict = comfort(t, h)
+        r, y, g = LIGHTS[verdict]
+        red.value(r); yellow.value(y); green.value(g)
+        print("{} °C  {} %  -> {}".format(t, h, verdict))
+    else:
+        red.toggle()                 # blinking red = sensor problem
+    time.sleep(2)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Relative humidity; the <code>dht</code> module.</li>
+  <li>Handling errors with <code>try/except OSError</code> and retries.</li>
+  <li>Separating decisions (a function that returns a verdict) from actions (LEDs).</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: dew point &amp; breath detector</h2>
+<ol>
+  <li>Calculate the <b>dew point</b> — the temperature at which water would condense out of the air (the reason windows fog up). Use the Magnus formula:<br>
+  <code>γ = ln(RH/100) + 17.62·T / (243.12 + T)</code>, then <code>dew = 243.12·γ / (17.62 − γ)</code>.</li>
+  <li>Print temperature, humidity and dew point. If the dew point is within 3 °C of the temperature, show red: "condensation risk!".</li>
+  <li><b>Breath detector:</b> if humidity jumps by 5 % or more between two readings, count it as a breath and blink the yellow LED. Print the number of breaths detected.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p><code>math.log</code> is the natural logarithm. Remember the previous humidity in a variable <code>last_h</code> and compare. Read every 1 s for the breath detector to be responsive.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import dht, time, math
+
+sensor = dht.DHT11(Pin(16))
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+
+def read_dht():
+    try:
+        sensor.measure()
+        return sensor.temperature(), sensor.humidity()
+    except OSError:
+        return None
+
+def dew_point(t, rh):
+    gamma = math.log(rh / 100) + 17.62 * t / (243.12 + t)
+    return 243.12 * gamma / (17.62 - gamma)
+
+time.sleep(1)
+last_h = None
+breaths = 0
+while True:
+    reading = read_dht()
+    if reading:
+        t, h = reading
+        dp = dew_point(t, h)
+        risk = t - dp < 3
+        red.value(risk)
+        green.value(not risk)
+        print("{} °C  {} %  dew point {:.1f} °C{}".format(t, h, dp, "  CONDENSATION RISK" if risk else ""))
+        if last_h is not None and h - last_h >= 5:
+            breaths += 1
+            print("Breath detected! total:", breaths)
+            for _ in range(3):
+                yellow.on(); time.sleep(0.1); yellow.off(); time.sleep(0.1)
+        last_h = h
+    time.sleep(1)
+</script>
+<p>At 21 °C and 50 % RH the dew point is about 10 °C — so a window colder than 10 °C fogs up. That's why bathrooms (high RH) steam up so easily.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>
