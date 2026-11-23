@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 24 · Wi-Fi Christmas Tree</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="24">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 24</p>
+  <h1><span class="daynum">24</span>Wi-Fi Christmas Tree</h1>
+  <p class="lede">Merry Christmas! 🎄 The "W" in Pico W stands for wireless. For the finale, the Pico becomes a tiny web server: open a page on your phone to see the room temperature, choose the tree's colour and play Jingle Bells.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-001 DS18B20 temperature sensor</li>
+  <li>KY-016 RGB LED</li>
+  <li>KY-006 Passive buzzer</li>
+  <li>Your Wi-Fi name and password (2.4 GHz network)</li>
+  <li>10 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>Three old friends: the DS18B20 from Day 10, the RGB LED from Day 4 and the passive buzzer from Day 6.</p>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "ds", "name": "KY-001 DS18B20", "col": 24, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#111" },
+    { "id": "rgb", "name": "KY-016 RGB LED", "col": 32, "pins": ["R", "G", "B", "-"], "icon": "rgb" },
+    { "id": "bz", "name": "KY-006 Passive buzzer", "col": 42, "pins": ["S", "mid", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "ds.S", "color": "blue", "note": "1-Wire" },
+    { "from": "ds.+", "to": "+" },
+    { "from": "ds.-", "to": "-" },
+    { "from": "GP2", "to": "rgb.R", "color": "orange" },
+    { "from": "GP3", "to": "rgb.G", "color": "green" },
+    { "from": "GP4", "to": "rgb.B", "color": "purple" },
+    { "from": "rgb.-", "to": "-" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Keep your password out of your code</h3>
+<p>Create a separate file on the Pico called <code>secrets.py</code>. Your main program imports it, so you can share the main program without sharing your password.</p>
+<script type="text/x-python" data-title="secrets.py (save on the Pico)">
+SSID = "YourWiFiName"
+PASSWORD = "YourWiFiPassword"
+</script>
+
+<h3>2. Connect to Wi-Fi</h3>
+<p><code>network.WLAN(network.STA_IF)</code> is the Wi-Fi chip in "station" mode (a normal client, like your phone). We wait up to 15 seconds for the connection; the on-board LED blinks while waiting.</p>
+<script type="text/x-python">
+import network, socket, time
+from machine import Pin, PWM
+import onewire, ds18x20
+import secrets
+
+led = Pin("LED", Pin.OUT)
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+wlan.connect(secrets.SSID, secrets.PASSWORD)
+
+for _ in range(30):
+    if wlan.isconnected():
+        break
+    led.toggle()
+    time.sleep(0.5)
+
+if wlan.isconnected():
+    led.on()
+    ip = wlan.ifconfig()[0]
+    print("Connected! Open http://{}/ in your browser".format(ip))
+else:
+    print("Could not connect. Status:", wlan.status())
+</script>
+<p>Write down the IP address. Your phone or computer must be on the <b>same</b> Wi-Fi network to reach it.</p>
+
+<h3>3. The hardware, as functions</h3>
+<p>Nothing new here — compact versions of code from earlier days.</p>
+<script type="text/x-python">
+ds = ds18x20.DS18X20(onewire.OneWire(Pin(16)))
+roms = ds.scan()
+
+def temperature():
+    if not roms:
+        return None
+    ds.convert_temp()
+    time.sleep_ms(750)
+    return ds.read_temp(roms[0])
+
+rgb = [PWM(Pin(p)) for p in (2, 3, 4)]
+for ch in rgb:
+    ch.freq(1000)
+colour = "#00ff20"
+
+def set_colour(hex_code):
+    global colour
+    colour = hex_code
+    for ch, i in zip(rgb, (1, 3, 5)):
+        v = int(hex_code[i:i + 2], 16)
+        ch.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+bz = PWM(Pin(15)); bz.duty_u16(0)
+JINGLE = [(659, 1), (659, 1), (659, 2), (659, 1), (659, 1), (659, 2),
+          (659, 1), (784, 1), (523, 1.5), (587, 0.5), (659, 4)]
+
+def jingle():
+    for f, beats in JINGLE:
+        bz.freq(f); bz.duty_u16(32768)
+        time.sleep(0.2 * beats)
+        bz.duty_u16(0)
+        time.sleep(0.03)
+
+set_colour(colour)
+</script>
+
+<h3>4. How a web server works</h3>
+<p>Your browser opens a connection to the Pico on <b>port 80</b> and sends a text request like this:</p>
+<script type="text/x-output">
+GET /color?c=%23ff0000 HTTP/1.1
+Host: 192.168.1.42
+...
+</script>
+<p>The first line contains the <b>path</b> (<code>/color</code>) and <b>query</b> (<code>c=%23ff0000</code> — <code>%23</code> is how URLs write <code>#</code>). The server answers with a status line, headers, a blank line and the HTML. Here's a helper that splits the request:</p>
+<script type="text/x-python">
+def parse_request(request):
+    """'GET /color?c=%23ff0000 HTTP/1.1' -> ('/color', {'c': '#ff0000'})"""
+    try:
+        target = request.split("\r\n")[0].split(" ")[1]
+    except IndexError:
+        return "/", {}
+    path, _, query = target.partition("?")
+    params = {}
+    for pair in query.split("&"):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            params[key] = value.replace("%23", "#")
+    return path, params
+
+print(parse_request("GET /color?c=%23ff0000 HTTP/1.1\r\n"))
+</script>
+
+<h3>5. The page</h3>
+<p>The HTML lives in a Python string. <code>{temp}</code> and <code>{colour}</code> are placeholders we fill with <code>.replace()</code> (not <code>.format()</code>, because the CSS curly braces would confuse it). The colour picker submits a form to <code>/color</code>.</p>
+<script type="text/x-python">
+PAGE = """<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico Tree</title>
+<style>
+ body { font-family: sans-serif; text-align: center; background: #0b3d20; color: #fff; }
+ .card { background: #145a32; margin: 20px auto; padding: 20px; border-radius: 16px; max-width: 320px; }
+ button, input { font-size: 20px; padding: 10px 18px; border-radius: 10px; border: 0; margin: 6px; }
+ .t { font-size: 48px; }
+</style></head>
+<body>
+ <h1>&#127876; Pico W Christmas Tree</h1>
+ <div class="card"><div>Room temperature</div><div class="t">{temp} &deg;C</div></div>
+ <div class="card">
+  <form action="/color"><input type="color" name="c" value="{colour}">
+  <button>Set colour</button></form>
+  <a href="/color?c=%23ff0000"><button style="background:#e33">Red</button></a>
+  <a href="/color?c=%2300ff20"><button style="background:#3c3">Green</button></a>
+  <a href="/color?c=%23ffb000"><button style="background:#fb0">Gold</button></a>
+  <a href="/color?c=%23000000"><button>Off</button></a>
+ </div>
+ <div class="card"><a href="/jingle"><button>&#127925; Play Jingle Bells</button></a></div>
+</body></html>"""
+
+def render():
+    t = temperature()
+    temp = "--" if t is None else "{:.1f}".format(t)
+    return PAGE.replace("{temp}", temp).replace("{colour}", colour)
+</script>
+
+<h3>6. Serve!</h3>
+<p>A <b>socket</b> is one end of a network connection. We <code>bind</code> to port 80, <code>listen</code>, and then loop forever: <code>accept</code> a visitor, read the request, act on it, send the page, close. After an action we send a <b>redirect</b> back to <code>/</code>, so refreshing the browser doesn't repeat the action.</p>
+<script type="text/x-python">
+addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(addr)
+server.listen(2)
+print("Listening on http://{}/".format(ip))
+
+while True:
+    client, remote = server.accept()
+    try:
+        request = client.recv(1024).decode()
+        path, params = parse_request(request)
+        print(remote[0], path, params)
+        if path == "/color" and len(params.get("c", "")) == 7:
+            set_colour(params["c"])
+        elif path == "/jingle":
+            jingle()
+        if path in ("/color", "/jingle"):
+            client.send("HTTP/1.0 303 See Other\r\nLocation: /\r\n\r\n")
+        elif path == "/":
+            client.send("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n")
+            client.send(render())
+        else:
+            client.send("HTTP/1.0 404 Not Found\r\n\r\nNot found")
+    except OSError as e:
+        print("connection error:", e)
+    finally:
+        client.close()
+</script>
+<p>Open the address on your phone. Change the colour, play the song — the Pico W is now on your network! 🎉</p>
+
+<script type="text/x-python" data-title="Full program — day24 main.py (needs secrets.py)">
+import network, socket, time
+from machine import Pin, PWM
+import onewire, ds18x20
+import secrets
+
+led = Pin("LED", Pin.OUT)
+ds = ds18x20.DS18X20(onewire.OneWire(Pin(16)))
+roms = ds.scan()
+rgb = [PWM(Pin(p)) for p in (2, 3, 4)]
+for ch in rgb:
+    ch.freq(1000)
+bz = PWM(Pin(15)); bz.duty_u16(0)
+colour = "#00ff20"
+JINGLE = [(659, 1), (659, 1), (659, 2), (659, 1), (659, 1), (659, 2),
+          (659, 1), (784, 1), (523, 1.5), (587, 0.5), (659, 4)]
+
+PAGE = """<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico Tree</title>
+<style>
+ body { font-family: sans-serif; text-align: center; background: #0b3d20; color: #fff; }
+ .card { background: #145a32; margin: 20px auto; padding: 20px; border-radius: 16px; max-width: 320px; }
+ button, input { font-size: 20px; padding: 10px 18px; border-radius: 10px; border: 0; margin: 6px; }
+ .t { font-size: 48px; }
+</style></head>
+<body>
+ <h1>&#127876; Pico W Christmas Tree</h1>
+ <div class="card"><div>Room temperature</div><div class="t">{temp} &deg;C</div></div>
+ <div class="card">
+  <form action="/color"><input type="color" name="c" value="{colour}">
+  <button>Set colour</button></form>
+  <a href="/color?c=%23ff0000"><button style="background:#e33">Red</button></a>
+  <a href="/color?c=%2300ff20"><button style="background:#3c3">Green</button></a>
+  <a href="/color?c=%23ffb000"><button style="background:#fb0">Gold</button></a>
+  <a href="/color?c=%23000000"><button>Off</button></a>
+ </div>
+ <div class="card"><a href="/jingle"><button>&#127925; Play Jingle Bells</button></a></div>
+</body></html>"""
+
+def connect():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(secrets.SSID, secrets.PASSWORD)
+    for _ in range(30):
+        if wlan.isconnected():
+            led.on()
+            return wlan.ifconfig()[0]
+        led.toggle()
+        time.sleep(0.5)
+    raise RuntimeError("Wi-Fi connection failed")
+
+def temperature():
+    if not roms:
+        return None
+    ds.convert_temp()
+    time.sleep_ms(750)
+    return ds.read_temp(roms[0])
+
+def set_colour(hex_code):
+    global colour
+    colour = hex_code
+    for ch, i in zip(rgb, (1, 3, 5)):
+        ch.duty_u16(int((int(hex_code[i:i + 2], 16) / 255) ** 2.2 * 65535))
+
+def jingle():
+    for f, beats in JINGLE:
+        bz.freq(f); bz.duty_u16(32768)
+        time.sleep(0.2 * beats)
+        bz.duty_u16(0)
+        time.sleep(0.03)
+
+def parse_request(request):
+    try:
+        target = request.split("\r\n")[0].split(" ")[1]
+    except IndexError:
+        return "/", {}
+    path, _, query = target.partition("?")
+    params = {}
+    for pair in query.split("&"):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            params[k] = v.replace("%23", "#")
+    return path, params
+
+def render():
+    t = temperature()
+    temp = "--" if t is None else "{:.1f}".format(t)
+    return PAGE.replace("{temp}", temp).replace("{colour}", colour)
+
+ip = connect()
+set_colour(colour)
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(socket.getaddrinfo("0.0.0.0", 80)[0][-1])
+server.listen(2)
+print("Open http://{}/".format(ip))
+
+while True:
+    client, remote = server.accept()
+    try:
+        path, params = parse_request(client.recv(1024).decode())
+        if path == "/color" and len(params.get("c", "")) == 7:
+            set_colour(params["c"])
+        elif path == "/jingle":
+            jingle()
+        if path in ("/color", "/jingle"):
+            client.send("HTTP/1.0 303 See Other\r\nLocation: /\r\n\r\n")
+        elif path == "/":
+            client.send("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n")
+            client.send(render())
+        else:
+            client.send("HTTP/1.0 404 Not Found\r\n\r\nNot found")
+    except OSError as e:
+        print("connection error:", e)
+    finally:
+        client.close()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Connecting the Pico W to Wi-Fi with <code>network.WLAN</code>; keeping secrets in a separate file.</li>
+  <li>How HTTP works: requests, paths, query strings, status codes, redirects.</li>
+  <li>Sockets: <code>bind</code>, <code>listen</code>, <code>accept</code>, <code>recv</code>, <code>send</code>, <code>close</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: live dashboard and a twinkling tree</h2>
+<ol>
+  <li>Add a JSON endpoint <code>/api</code> that returns <code>{"temp": 21.5, "colour": "#00ff20"}</code> with <code>Content-Type: application/json</code>.</li>
+  <li>Add a little JavaScript to the page that fetches <code>/api</code> every 3 seconds and updates the temperature <b>without reloading</b>.</li>
+  <li>Add a <b>"Twinkle"</b> mode button: the tree slowly cycles through the rainbow — while the server keeps answering requests. (Right now <code>accept()</code> blocks forever, so nothing else can happen!)</li>
+  <li>Bonus: the temperature reading takes 750 ms. Read it in the background every 5 seconds and serve the last known value instantly.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p><code>server.settimeout(0.05)</code> makes <code>accept()</code> give up after 50 ms with an <code>OSError</code>. Catch it and use that moment to update the animation. In JavaScript: <code>setInterval(async () =&gt; { const r = await fetch('/api'); const j = await r.json(); ... }, 3000)</code>. Use <code>json.dumps()</code> on the Pico.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The server loop is now an <b>event loop</b>: every 50 ms it either handles a visitor or gets a timeout and does background work (animation step, occasional temperature reading). For the background reading we start a conversion and only read it 750 ms later, so we never sit and wait.</p>
+<script type="text/x-python" data-title="Solution">
+import network, socket, time, json
+from machine import Pin, PWM
+import onewire, ds18x20
+import secrets
+
+ds = ds18x20.DS18X20(onewire.OneWire(Pin(16)))
+roms = ds.scan()
+rgb = [PWM(Pin(p)) for p in (2, 3, 4)]
+for ch in rgb:
+    ch.freq(1000)
+colour, twinkle, hue = "#00ff20", False, 0
+last_temp = None
+
+PAGE = """<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico Tree</title>
+<style>
+ body { font-family: sans-serif; text-align: center; background: #0b3d20; color: #fff; }
+ .card { background: #145a32; margin: 20px auto; padding: 20px; border-radius: 16px; max-width: 320px; }
+ button, input { font-size: 20px; padding: 10px 18px; border-radius: 10px; border: 0; margin: 6px; }
+ .t { font-size: 48px; }
+</style></head>
+<body>
+ <h1>&#127876; Pico W Christmas Tree</h1>
+ <div class="card"><div>Room temperature</div><div class="t"><span id="t">--</span> &deg;C</div></div>
+ <div class="card">
+  <form action="/color"><input type="color" name="c" id="c">
+  <button>Set colour</button></form>
+  <a href="/twinkle"><button>&#10024; Twinkle</button></a>
+ </div>
+<script>
+async function update() {
+  const j = await (await fetch('/api')).json();
+  document.getElementById('t').textContent = j.temp === null ? '--' : j.temp.toFixed(1);
+  document.getElementById('c').value = j.colour;
+}
+update(); setInterval(update, 3000);
+<""" + """/script>
+</body></html>"""
+
+def write_rgb(r, g, b):
+    for ch, v in zip(rgb, (r, g, b)):
+        ch.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+def set_colour(hex_code):
+    global colour, twinkle
+    colour, twinkle = hex_code, False
+    write_rgb(*(int(hex_code[i:i + 2], 16) for i in (1, 3, 5)))
+
+def hsv_to_rgb(h):
+    h = (h % 360) / 60
+    i = int(h); f = h - i
+    r, g, b = [(1, f, 0), (1 - f, 1, 0), (0, 1, f), (0, 1 - f, 1), (f, 0, 1), (1, 0, 1 - f)][i]
+    return int(r * 255), int(g * 255), int(b * 255)
+
+def parse_request(request):
+    try:
+        target = request.split("\r\n")[0].split(" ")[1]
+    except IndexError:
+        return "/", {}
+    path, _, query = target.partition("?")
+    params = {}
+    for pair in query.split("&"):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            params[k] = v.replace("%23", "#")
+    return path, params
+
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+wlan.connect(secrets.SSID, secrets.PASSWORD)
+while not wlan.isconnected():
+    time.sleep(0.5)
+print("Open http://{}/".format(wlan.ifconfig()[0]))
+
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(socket.getaddrinfo("0.0.0.0", 80)[0][-1])
+server.listen(2)
+server.settimeout(0.05)
+set_colour(colour)
+
+converting_since = None
+next_reading = time.ticks_ms()
+
+while True:
+    # --- background work
+    now = time.ticks_ms()
+    if roms and converting_since is None and time.ticks_diff(now, next_reading) >= 0:
+        ds.convert_temp()
+        converting_since = now
+    elif converting_since is not None and time.ticks_diff(now, converting_since) >= 750:
+        last_temp = ds.read_temp(roms[0])
+        converting_since = None
+        next_reading = time.ticks_add(now, 5000)
+    if twinkle:
+        hue = (hue + 2) % 360
+        write_rgb(*hsv_to_rgb(hue))
+
+    # --- visitors
+    try:
+        client, remote = server.accept()
+    except OSError:
+        continue                                  # timeout: nobody there
+    try:
+        client.settimeout(2)
+        path, params = parse_request(client.recv(1024).decode())
+        if path == "/api":
+            body = json.dumps({"temp": last_temp, "colour": colour})
+            client.send("HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n" + body)
+        elif path == "/color" and len(params.get("c", "")) == 7:
+            set_colour(params["c"])
+            client.send("HTTP/1.0 303 See Other\r\nLocation: /\r\n\r\n")
+        elif path == "/twinkle":
+            twinkle = True
+            client.send("HTTP/1.0 303 See Other\r\nLocation: /\r\n\r\n")
+        elif path == "/":
+            client.send("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n")
+            client.send(PAGE)
+        else:
+            client.send("HTTP/1.0 404 Not Found\r\n\r\nNot found")
+    except OSError as e:
+        print("connection error:", e)
+    finally:
+        client.close()
+</script>
+<p>About the odd-looking <code>&lt;""" + """/script&gt;</code> near the end of <code>PAGE</code>: Python glues the two strings back together into a normal closing tag. It's only split so that <i>this</i> web page doesn't mistake it for the end of the code cell — you can write it in one piece in your own file.</p>
+<p>For bigger projects, MicroPython's <code>asyncio</code> module makes this kind of "many things at once" programming even neater. A great next step after Christmas!</p>
+</details>
+</section>
+
+<h2><span class="em">🎁</span>You did it!</h2>
+<p>In 24 days you've used every module in the kit: digital and analog inputs, PWM, interrupts, three communication protocols, signal processing, state machines, files and a web server. That's a real embedded-programming toolbox. Want more? The <b>bonus days</b> introduce an OLED display, a weather sensor and a motion sensor.</p>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

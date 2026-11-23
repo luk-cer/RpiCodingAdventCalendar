@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 23 · Heartbeat</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="23">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 23</p>
+  <h1><span class="daynum">23</span>Heartbeat</h1>
+  <p class="lede">Shine infrared light through your fingertip and you can see your heart beating — as a tiny wiggle in a big signal. Today is a lesson in signal processing: dig out that wiggle, find the beats, and beep like a hospital monitor.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-039 Heartbeat sensor</li>
+  <li>KY-006 Passive buzzer</li>
+  <li>5 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How it works</h2>
+<p>The KY-039 has an IR LED on one side and a phototransistor on the other. Put your fingertip between them. Each heartbeat pushes a little more blood into your finger, which absorbs a little more light. The change is <b>tiny</b> — often less than 1 % of the signal — so most of the work is in software. This technique is called <b>photoplethysmography</b> (PPG); smartwatches use it too.</p>
+<div class="note"><p><b>Expect to experiment.</b> This sensor is sensitive to room light, finger pressure and movement. Do it in a dim room, rest your finger lightly (don't squeeze), and keep still. Cupping your other hand over it helps a lot. It's a fun experiment, not a medical device.</p></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "hb", "name": "KY-039 Heartbeat", "col": 28, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#e57373" },
+    { "id": "bz", "name": "KY-006 Passive buzzer", "col": 38, "pins": ["S", "mid", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP26", "to": "hb.S", "color": "white", "note": "ADC0" },
+    { "from": "hb.+", "to": "+" },
+    { "from": "hb.-", "to": "-" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. The raw signal</h3>
+<p>Open the plotter, place your finger and wait. You'll see a big, slowly drifting value. Look closely for small regular bumps — about one per second.</p>
+<script type="text/x-python">
+from machine import ADC, Pin, PWM
+import time
+
+sensor = ADC(26)
+for _ in range(500):
+    print(sensor.read_u16())
+    time.sleep_ms(20)              # 50 samples per second
+</script>
+
+<h3>2. Steady sampling</h3>
+<p>For measuring rates, samples must be evenly spaced. <code>sleep_ms(20)</code> plus the time our code takes would drift, so we schedule against absolute deadlines (the trick from Day 22). Each sample also averages 8 readings to reduce noise.</p>
+<script type="text/x-python">
+PERIOD_MS = 20                     # 50 Hz
+next_t = time.ticks_ms()
+
+def sample():
+    global next_t
+    next_t = time.ticks_add(next_t, PERIOD_MS)
+    while time.ticks_diff(next_t, time.ticks_ms()) > 0:
+        pass
+    return sum(sensor.read_u16() for _ in range(8)) / 8
+</script>
+
+<h3>3. Remove the drift</h3>
+<p>The heartbeat is a fast wiggle riding on a slow drift. A slow moving average (the <b>baseline</b>) follows the drift but not the beats; subtracting it leaves just the wiggle. This is a simple <b>high-pass filter</b>. A short average on top smooths out the high-frequency noise (a <b>low-pass filter</b>).</p>
+<script type="text/x-python">
+baseline = sample()
+smooth = 0.0
+
+def pulse_signal():
+    global baseline, smooth
+    v = sample()
+    baseline += 0.02 * (v - baseline)       # very slow: follows drift only
+    smooth += 0.3 * ((v - baseline) - smooth)
+    return smooth
+
+for _ in range(500):
+    print(round(pulse_signal()))
+</script>
+<p>The plot should now wiggle around zero with a clear rhythm. On some boards the beats point down instead of up — the next step handles both.</p>
+
+<h3>4. Detect beats</h3>
+<p>A beat is where the signal crosses a threshold going in the beat's direction. The threshold adapts: it's 50 % of the recent peak size, which slowly decays so it can follow weaker signals. A <b>refractory period</b> of 300 ms ignores double-triggers (no heart beats faster than 200 bpm at rest).</p>
+<script type="text/x-python">
+INVERT = False          # set True if the beats point downwards in the plot
+peak = 100.0
+above = False
+last_beat = time.ticks_ms()
+
+def detect_beat(s):
+    """Returns the time between beats in ms, or None."""
+    global peak, above, last_beat
+    if INVERT:
+        s = -s
+    peak = max(peak * 0.995, s, 50)
+    now = time.ticks_ms()
+    if not above and s > peak * 0.5 and time.ticks_diff(now, last_beat) > 300:
+        above = True
+        interval = time.ticks_diff(now, last_beat)
+        last_beat = now
+        return interval
+    if s < peak * 0.25:
+        above = False
+    return None
+</script>
+
+<h3>5. BPM and beeps</h3>
+<p>Beats per minute = 60 000 / interval in ms. A single interval is jumpy, so we average the last 5 plausible ones (between 40 and 180 bpm).</p>
+<script type="text/x-python">
+bz = PWM(Pin(15))
+bz.duty_u16(0)
+led = Pin("LED", Pin.OUT)
+intervals = []
+
+while True:
+    s = pulse_signal()
+    iv = detect_beat(s)
+    if iv:
+        bz.freq(1000); bz.duty_u16(20000); led.on()
+        if 333 <= iv <= 1500:
+            intervals = (intervals + [iv])[-5:]
+            bpm = 60000 / (sum(intervals) / len(intervals))
+            print("♥ {:.0f} bpm".format(bpm))
+    elif time.ticks_diff(time.ticks_ms(), last_beat) > 60:
+        bz.duty_u16(0); led.off()
+</script>
+
+<script type="text/x-python" data-title="Full program — day23 main.py">
+from machine import ADC, Pin, PWM
+import time
+
+INVERT = False
+PERIOD_MS = 20
+sensor = ADC(26)
+bz = PWM(Pin(15)); bz.duty_u16(0)
+led = Pin("LED", Pin.OUT)
+
+next_t = time.ticks_ms()
+def sample():
+    global next_t
+    next_t = time.ticks_add(next_t, PERIOD_MS)
+    while time.ticks_diff(next_t, time.ticks_ms()) > 0:
+        pass
+    return sum(sensor.read_u16() for _ in range(8)) / 8
+
+baseline, smooth = sample(), 0.0
+peak, above = 100.0, False
+last_beat = time.ticks_ms()
+intervals = []
+
+try:
+    while True:
+        v = sample()
+        baseline += 0.02 * (v - baseline)
+        smooth += 0.3 * ((v - baseline) - smooth)
+        s = -smooth if INVERT else smooth
+        peak = max(peak * 0.995, s, 50)
+        now = time.ticks_ms()
+        if not above and s > peak * 0.5 and time.ticks_diff(now, last_beat) > 300:
+            above = True
+            iv = time.ticks_diff(now, last_beat)
+            last_beat = now
+            bz.freq(1000); bz.duty_u16(20000); led.on()
+            if 333 <= iv <= 1500:
+                intervals = (intervals + [iv])[-5:]
+                print("♥ {:.0f} bpm".format(60000 * len(intervals) / sum(intervals)))
+        elif s < peak * 0.25:
+            above = False
+        if time.ticks_diff(now, last_beat) > 60:
+            bz.duty_u16(0); led.off()
+except KeyboardInterrupt:
+    bz.duty_u16(0); led.off()
+</script>
+<p>Check yourself: count your pulse at your wrist for 15 seconds and multiply by 4. How close is the Pico?</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Photoplethysmography; extracting a small signal from a large one.</li>
+  <li>Fixed-rate sampling; high-pass and low-pass filtering with moving averages.</li>
+  <li>Adaptive thresholds, refractory periods, rejecting implausible values.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: a smarter pulse monitor</h2>
+<ol>
+  <li><b>Finger detection:</b> the raw value changes a lot when a finger is placed or removed. If the baseline jumps by more than 10 % within half a second, or no beat for 3 seconds, print "place finger…" and reset the interval history.</li>
+  <li><b>Robust BPM:</b> use the <b>median</b> of the last 7 intervals instead of the mean. One missed or extra beat then barely changes the result.</li>
+  <li><b>Statistics:</b> after 30 seconds with a finger, print min, max and average BPM for the session.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Median: sort a copy of the list and take the middle element: <code>sorted(xs)[len(xs) // 2]</code>. For finger detection, keep the baseline value from 25 samples ago (a small list).</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import ADC, Pin, PWM
+import time
+
+INVERT = False
+PERIOD_MS = 20
+sensor = ADC(26)
+bz = PWM(Pin(15)); bz.duty_u16(0)
+
+next_t = time.ticks_ms()
+def sample():
+    global next_t
+    next_t = time.ticks_add(next_t, PERIOD_MS)
+    while time.ticks_diff(next_t, time.ticks_ms()) > 0:
+        pass
+    return sum(sensor.read_u16() for _ in range(8)) / 8
+
+def median(xs):
+    return sorted(xs)[len(xs) // 2]
+
+def reset():
+    global intervals, session, session_start, finger
+    intervals, session, finger = [], [], False
+    session_start = time.ticks_ms()
+
+baseline, smooth = sample(), 0.0
+history = [baseline] * 25            # baseline values of the last 0.5 s
+peak, above = 100.0, False
+last_beat = time.ticks_ms()
+reset()
+reported = False
+
+while True:
+    v = sample()
+    baseline += 0.02 * (v - baseline)
+    smooth += 0.3 * ((v - baseline) - smooth)
+    history = history[1:] + [v]
+    now = time.ticks_ms()
+
+    jump = abs(history[-1] - history[0]) > 0.10 * max(history[0], 1)
+    silent = time.ticks_diff(now, last_beat) > 3000
+    if jump or silent:
+        if finger or not reported:
+            print("place finger...")
+            reported = True
+        reset()
+        baseline = v                         # re-centre quickly
+        last_beat = now
+        continue
+
+    s = -smooth if INVERT else smooth
+    peak = max(peak * 0.995, s, 50)
+    if not above and s > peak * 0.5 and time.ticks_diff(now, last_beat) > 300:
+        above = True
+        iv = time.ticks_diff(now, last_beat)
+        last_beat = now
+        bz.freq(1000); bz.duty_u16(20000)
+        if 333 <= iv <= 1500:
+            finger, reported = True, False
+            intervals = (intervals + [iv])[-7:]
+            bpm = 60000 / median(intervals)
+            session.append(bpm)
+            print("♥ {:.0f} bpm".format(bpm))
+            if time.ticks_diff(now, session_start) > 30000 and len(session) > 5:
+                print("30 s summary: min {:.0f}  max {:.0f}  avg {:.0f}".format(
+                    min(session), max(session), sum(session) / len(session)))
+                session, session_start = [], now
+    elif s < peak * 0.25:
+        above = False
+    if time.ticks_diff(now, last_beat) > 60:
+        bz.duty_u16(0)
+</script>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

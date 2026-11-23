@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bonus Day 27 · Digital Snow Globe</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="27">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Bonus Day 27</p>
+  <h1><span class="daynum">27</span>Digital Snow Globe</h1>
+  <p class="lede">The MPU6050 feels gravity and rotation — the same kind of sensor that turns your phone's screen. Today it becomes a spirit level, and in the exercise a snow globe where the flakes really fall "down" however you hold the breadboard.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>MPU6050 board (GY-521)</li>
+  <li>0.96″ SSD1306 OLED</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Accelerometer + gyroscope</h2>
+<p>Inside the chip are microscopic structures etched in silicon (<b>MEMS</b>). The <b>accelerometer</b> has tiny masses on springs: gravity and movement push them, and the chip measures how far. At rest it measures only gravity — 1 <i>g</i> pointing down — which tells you how the sensor is tilted. The <b>gyroscope</b> measures how fast it rotates, in degrees per second. Both report three axes: X, Y and Z (printed on the board).</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "mpu", "name": "MPU6050 GY-521", "col": 25, "pins": ["VCC", "GND", "SCL", "SDA", "XDA", "XCL", "AD0", "INT"], "color": "#0d47a1", "icon": "chip", "iconColor": "#212121" },
+    { "id": "oled", "name": "SSD1306 OLED 128x64", "col": 40, "pins": ["GND", "VCC", "SCL", "SDA"], "icon": "oled", "width": 8, "height": 92 }
+  ],
+  "wires": [
+    { "from": "mpu.VCC", "to": "+" },
+    { "from": "mpu.GND", "to": "-" },
+    { "from": "GP5", "to": "mpu.SCL", "color": "yellow", "note": "I2C clock" },
+    { "from": "GP4", "to": "mpu.SDA", "color": "blue", "note": "I2C data" },
+    { "from": "oled.GND", "to": "-" },
+    { "from": "oled.VCC", "to": "+" },
+    { "from": "GP5", "to": "oled.SCL", "color": "yellow" },
+    { "from": "GP4", "to": "oled.SDA", "color": "blue" }
+  ]
+}
+</script></div>
+<p>XDA, XCL, AD0 and INT stay unconnected. (AD0 selects the address: unconnected/low = <code>0x68</code>, high = <code>0x69</code>.)</p>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Wake it up</h3>
+<p>The MPU6050 starts in sleep mode. Writing 0 to the power management register <code>0x6B</code> wakes it. Register <code>0x75</code> ("WHO_AM_I") should answer <code>0x68</code>.</p>
+<script type="text/x-python">
+from machine import Pin, I2C
+import time, struct, math
+
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+print([hex(a) for a in i2c.scan()])          # expect 0x3c and 0x68
+
+MPU = 0x68
+i2c.writeto_mem(MPU, 0x6B, b"\x00")          # wake up
+print("WHO_AM_I:", hex(i2c.readfrom_mem(MPU, 0x75, 1)[0]))
+</script>
+<div class="note"><p>Some clone boards answer <code>0x70</code> or <code>0x72</code> to WHO_AM_I. They're compatible chips and work with this code.</p></div>
+
+<h3>2. Read all sensors at once</h3>
+<p>14 bytes starting at <code>0x3B</code>: accelerometer X, Y, Z, temperature, gyroscope X, Y, Z — each a signed 16-bit number, high byte first (<b>big-endian</b>, hence <code>&gt;</code> in the format string). With the default ranges, 16384 = 1 <i>g</i> and 131 = 1 °/s.</p>
+<script type="text/x-python">
+def read_mpu():
+    ax, ay, az, t, gx, gy, gz = struct.unpack(">hhhhhhh", i2c.readfrom_mem(MPU, 0x3B, 14))
+    accel = (ax / 16384, ay / 16384, az / 16384)          # in g
+    gyro = (gx / 131, gy / 131, gz / 131)                 # in °/s
+    temp = t / 340 + 36.53                                # °C (chip temperature)
+    return accel, gyro, temp
+
+for _ in range(30):
+    a, g, t = read_mpu()
+    print("a=({:+.2f} {:+.2f} {:+.2f}) g  gyro=({:+6.1f} {:+6.1f} {:+6.1f}) °/s".format(*(a + g)))
+    time.sleep_ms(200)
+</script>
+<p>Lying flat, Z should read about +1 g and X, Y about 0. Tilt the breadboard and watch gravity "move" between the axes. Rotate it quickly to see the gyro values jump.</p>
+
+<h3>3. Tilt angles</h3>
+<p>Gravity's direction gives the tilt. <b>Roll</b> (tilting left/right around X) and <b>pitch</b> (tilting forward/back around Y) come from <code>atan2</code>, like the joystick angle on Day 20.</p>
+<script type="text/x-python">
+def tilt(a):
+    ax, ay, az = a
+    roll = math.degrees(math.atan2(ay, az))
+    pitch = math.degrees(math.atan2(-ax, math.sqrt(ay * ay + az * az)))
+    return roll, pitch
+
+for _ in range(30):
+    r, p = tilt(read_mpu()[0])
+    print("roll {:+6.1f}°   pitch {:+6.1f}°".format(r, p))
+    time.sleep_ms(200)
+</script>
+
+<h3>4. A spirit level on the OLED</h3>
+<p>Like the bubble in a builder's level, our "bubble" moves <b>away</b> from the low side. A smoothing filter keeps it from jittering. When the board is level within 1°, the bubble turns into a filled circle.</p>
+<script type="text/x-python">
+from ssd1306 import SSD1306_I2C
+oled = SSD1306_I2C(128, 64, i2c)
+
+def circle(cx, cy, r, fill=False):
+    for y in range(-r, r + 1):
+        w = int(math.sqrt(r * r - y * y))
+        if fill:
+            oled.hline(cx - w, cy + y, 2 * w + 1, 1)
+        else:
+            oled.pixel(cx - w, cy + y, 1)
+            oled.pixel(cx + w, cy + y, 1)
+
+sr = sp = 0.0
+while True:
+    r, p = tilt(read_mpu()[0])
+    sr += 0.2 * (r - sr)
+    sp += 0.2 * (p - sp)
+    bx = 64 + int(max(-30, min(30, sr)) * 0.9)     # bubble x from roll
+    by = 32 + int(max(-30, min(30, sp)) * 0.9)     # bubble y from pitch
+    oled.fill(0)
+    circle(64, 32, 28)                              # outer ring
+    oled.hline(56, 32, 17, 1); oled.vline(64, 24, 17, 1)
+    circle(bx, by, 5, fill=abs(sr) < 1 and abs(sp) < 1)
+    oled.text("{:+.0f}".format(sr), 0, 0)
+    oled.text("{:+.0f}".format(sp), 0, 56)
+    oled.show()
+</script>
+<p>If the bubble moves the wrong way on your board, flip a sign: <code>64 - int(...)</code> instead of <code>64 + int(...)</code>. It depends on how the module sits relative to the screen.</p>
+
+<script type="text/x-python" data-title="Full program — day27 main.py (needs ssd1306.py)">
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+import time, struct, math
+
+MPU = 0x68
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+i2c.writeto_mem(MPU, 0x6B, b"\x00")
+oled = SSD1306_I2C(128, 64, i2c)
+
+def accel():
+    ax, ay, az = struct.unpack(">hhh", i2c.readfrom_mem(MPU, 0x3B, 6))
+    return ax / 16384, ay / 16384, az / 16384
+
+def tilt(a):
+    ax, ay, az = a
+    return (math.degrees(math.atan2(ay, az)),
+            math.degrees(math.atan2(-ax, math.sqrt(ay * ay + az * az))))
+
+def circle(cx, cy, r, fill=False):
+    for y in range(-r, r + 1):
+        w = int(math.sqrt(r * r - y * y))
+        if fill:
+            oled.hline(cx - w, cy + y, 2 * w + 1, 1)
+        else:
+            oled.pixel(cx - w, cy + y, 1); oled.pixel(cx + w, cy + y, 1)
+
+sr = sp = 0.0
+while True:
+    r, p = tilt(accel())
+    sr += 0.2 * (r - sr); sp += 0.2 * (p - sp)
+    bx = 64 + int(max(-30, min(30, sr)) * 0.9)
+    by = 32 + int(max(-30, min(30, sp)) * 0.9)
+    oled.fill(0)
+    circle(64, 32, 28)
+    oled.hline(56, 32, 17, 1); oled.vline(64, 24, 17, 1)
+    circle(bx, by, 5, fill=abs(sr) < 1 and abs(sp) < 1)
+    oled.text("{:+.0f}".format(sr), 0, 0)
+    oled.text("{:+.0f}".format(sp), 0, 56)
+    oled.show()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>MEMS accelerometers and gyroscopes; gravity as a tilt reference.</li>
+  <li>Big-endian vs little-endian (compare with Day 26's BME280!), scaling raw values to physical units.</li>
+  <li>Roll and pitch with <code>atan2</code>; drawing circles from <code>x² + y² = r²</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: the snow globe</h2>
+<ol>
+  <li>40 snowflakes, each with a position <i>and</i> a velocity. Every frame, gravity (the accelerometer's X and Y) <b>accelerates</b> them, and a little air resistance slows them down.</li>
+  <li>Flakes stop at the screen edges (and lose speed) — so they pile up on whichever side is "down". Tilt the breadboard and watch them slide!</li>
+  <li><b>Shake</b> it: if the total acceleration differs from 1 g by more than 0.6 g, give every flake a random kick.</li>
+  <li>Bonus: draw a tiny house or tree in the middle that the snow falls around (just draw it — no collision needed).</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Per frame: <code>vx += gx * k; vy += gy * k; vx *= 0.96; x += vx</code>. Total acceleration is <code>sqrt(ax² + ay² + az²)</code>. Which accelerometer axis maps to screen x and y depends on how your boards are mounted — try it and swap/negate as needed.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>This is a tiny <b>physics simulation</b>: each frame applies forces to velocities and velocities to positions (Euler integration). Storing positions as floats keeps motion smooth even though pixels are whole numbers.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+import time, struct, math, random
+
+MPU = 0x68
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+i2c.writeto_mem(MPU, 0x6B, b"\x00")
+oled = SSD1306_I2C(128, 64, i2c)
+
+# axis mapping: change signs/order if flakes fall the wrong way
+SX, SY = -1, 1
+
+def accel():
+    ax, ay, az = struct.unpack(">hhh", i2c.readfrom_mem(MPU, 0x3B, 6))
+    return ax / 16384, ay / 16384, az / 16384
+
+class Flake:
+    def __init__(self):
+        self.x, self.y = random.uniform(0, 127), random.uniform(0, 63)
+        self.vx = self.vy = 0.0
+
+    def step(self, gx, gy):
+        self.vx = (self.vx + gx * 0.6) * 0.96
+        self.vy = (self.vy + gy * 0.6) * 0.96
+        self.x += self.vx
+        self.y += self.vy
+        if self.x < 0 or self.x > 127:
+            self.x = min(127, max(0, self.x)); self.vx *= -0.3
+        if self.y < 0 or self.y > 63:
+            self.y = min(63, max(0, self.y)); self.vy *= -0.3
+
+def house():
+    oled.rect(56, 40, 16, 12, 1)
+    oled.line(54, 40, 64, 31, 1); oled.line(64, 31, 74, 40, 1)
+    oled.fill_rect(62, 45, 4, 7, 1)
+
+flakes = [Flake() for _ in range(40)]
+while True:
+    ax, ay, az = accel()
+    total = math.sqrt(ax * ax + ay * ay + az * az)
+    if abs(total - 1) > 0.6:                          # shake!
+        for f in flakes:
+            f.vx += random.uniform(-4, 4)
+            f.vy += random.uniform(-4, 4)
+    gx, gy = SX * ay, SY * ax                         # gravity in screen coordinates
+    oled.fill(0)
+    house()
+    for f in flakes:
+        f.step(gx, gy)
+        oled.pixel(int(f.x), int(f.y), 1)
+    oled.show()
+    time.sleep_ms(20)
+</script>
+<p>Want bigger flakes? Draw a tiny plus sign (5 pixels) instead of a single pixel. Want more flakes? Watch the frame rate — at some point the Pico spends all its time drawing.</p>
+</details>
+</section>
+
+<h2><span class="em">🎓</span>The end — or the beginning</h2>
+<p>That's the whole calendar, bonus days included. You've used 35 sensor modules, a screen, two I2C sensors and Wi-Fi. A few ideas to keep going: combine Day 24's web server with Day 26's weather station; log data to a file overnight and plot it; or learn <code>asyncio</code> to run many tasks at once.</p>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

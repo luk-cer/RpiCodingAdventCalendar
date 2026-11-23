@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bonus Day 25 · OLED Display</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="25">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Bonus Day 25</p>
+  <h1><span class="daynum">25</span>OLED Display</h1>
+  <p class="lede">After Christmas, a gift: a screen! The tiny 0.96″ OLED shows text and graphics, and it introduces <b>I2C</b> — a two-wire bus that dozens of sensors share. We'll draw a Christmas tree in falling snow, then plot live sensor data.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>0.96″ SSD1306 OLED, 128×64, I2C (4 pins)</li>
+  <li>KY-018 Photoresistor (for the exercise)</li>
+  <li>7 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>I2C in a nutshell</h2>
+<p><b>I2C</b> ("I-squared-C") uses two wires: <b>SDA</b> (data) and <b>SCL</b> (clock). The Pico is the <i>controller</i>; each device on the bus has a 7-bit <b>address</b> and only answers when called by it. Because every device has its own address, many can hang on the same two wires — tomorrow we'll add a second one. The Pico has two I2C controllers; we use <b>I2C0</b> on <b>GP4 (SDA)</b> and <b>GP5 (SCL)</b>.</p>
+<p>The <b>OLED</b> (organic LED) has 128 × 64 pixels that each glow by themselves, so there's no backlight: black is truly black and it's readable at any angle.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "oled", "name": "SSD1306 OLED 128x64", "col": 30, "pins": ["GND", "VCC", "SCL", "SDA"], "icon": "oled", "width": 8, "height": 92 },
+    { "id": "ldr", "name": "KY-018 Photoresistor", "col": 42, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#d84315" }
+  ],
+  "wires": [
+    { "from": "oled.GND", "to": "-" },
+    { "from": "oled.VCC", "to": "+" },
+    { "from": "GP5", "to": "oled.SCL", "color": "yellow", "note": "I2C clock" },
+    { "from": "GP4", "to": "oled.SDA", "color": "blue", "note": "I2C data" },
+    { "from": "GP26", "to": "ldr.S", "color": "white", "note": "ADC0 (exercise)" },
+    { "from": "ldr.+", "to": "+" },
+    { "from": "ldr.-", "to": "-" }
+  ]
+}
+</script></div>
+<div class="warn"><p>Some OLED boards have <code>VCC GND SCL SDA</code> instead of <code>GND VCC SCL SDA</code>. Swapping power and ground can kill the display — check the labels printed on yours!</p></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Who's on the bus?</h3>
+<p><code>scan()</code> calls every possible address and lists the ones that answer.</p>
+<script type="text/x-python">
+from machine import Pin, I2C, ADC
+import time, random
+
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+print([hex(a) for a in i2c.scan()])
+</script>
+<script type="text/x-output">
+['0x3c']
+</script>
+<p><code>0x3c</code> is the usual OLED address (some use <code>0x3d</code>). Empty list? Check SDA/SCL aren't swapped and that VCC/GND are right.</p>
+
+<h3>2. Install the driver</h3>
+<p>The SSD1306 driver isn't built into MicroPython, but it's one small file from the official library. Easiest way: in Thonny choose <b>Tools → Manage packages</b>, search for <code>ssd1306</code> and install it. Alternatively, once your Pico is on Wi-Fi (Day 24):</p>
+<script type="text/x-python">
+import mip
+mip.install("ssd1306")       # needs an internet connection (see Day 24 to connect)
+</script>
+
+<h3>3. Hello, screen</h3>
+<p>Drawing happens in a hidden copy of the screen in memory (a <b>frame buffer</b>). Nothing appears until you call <code>show()</code>, which sends the whole buffer over I2C. The built-in font is 8 × 8 pixels: 16 characters per line, 8 lines.</p>
+<script type="text/x-python">
+from ssd1306 import SSD1306_I2C
+
+oled = SSD1306_I2C(128, 64, i2c)
+oled.fill(0)                          # clear (0 = black)
+oled.text("Merry Christmas", 4, 0)    # text, x, y
+oled.text("from your Pico!", 4, 12)
+oled.rect(0, 28, 128, 36, 1)          # outline: x, y, width, height, colour
+oled.fill_rect(10, 40, 30, 12, 1)     # filled box
+oled.line(50, 34, 120, 58, 1)
+oled.show()
+</script>
+<p>Coordinates start at the <b>top-left</b> corner (0, 0); x grows to the right (0–127), y grows <b>downwards</b> (0–63). Many of these displays are two-colour: the top 16 rows glow yellow, the rest blue — that's fixed in the hardware.</p>
+
+<h3>4. Draw a Christmas tree</h3>
+<p>A triangle is a stack of horizontal lines that get wider. Three stacked triangles plus a trunk make a tree; a few pixels make the star.</p>
+<script type="text/x-python">
+def triangle(cx, top, height, width):
+    for row in range(height):
+        half = (width * row) // (2 * height)
+        oled.hline(cx - half, top + row, 2 * half + 1, 1)
+
+def tree(cx=64):
+    triangle(cx, 12, 14, 26)
+    triangle(cx, 20, 16, 38)
+    triangle(cx, 30, 18, 52)
+    oled.fill_rect(cx - 4, 48, 9, 8, 1)          # trunk
+    for dx, dy in ((0, -3), (-1, -2), (0, -2), (1, -2), (-2, -1), (-1, -1),
+                   (0, -1), (1, -1), (2, -1), (-1, 0), (1, 0)):
+        oled.pixel(cx + dx, 10 + dy, 1)          # star
+
+oled.fill(0)
+tree()
+oled.show()
+</script>
+
+<h3>5. Let it snow</h3>
+<p>Each snowflake is a small list <code>[x, y, speed]</code>. Every frame we clear the screen, redraw the tree, move each flake down and draw it. Flakes that fall off the bottom restart at the top. The tiny <code>x</code> wobble makes them drift.</p>
+<script type="text/x-python">
+flakes = [[random.randint(0, 127), random.randint(0, 63), random.choice((1, 1, 2))] for _ in range(30)]
+
+def snow_frame():
+    oled.fill(0)
+    tree()
+    for f in flakes:
+        f[1] += f[2]
+        f[0] = (f[0] + random.choice((-1, 0, 0, 1))) % 128
+        if f[1] > 63:
+            f[0], f[1] = random.randint(0, 127), 0
+        oled.pixel(f[0], f[1], 1)
+    oled.show()
+
+for _ in range(300):
+    snow_frame()
+    time.sleep_ms(40)
+</script>
+
+<script type="text/x-python" data-title="Full program — day25 main.py">
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+import time, random
+
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+oled = SSD1306_I2C(128, 64, i2c)
+
+def triangle(cx, top, height, width):
+    for row in range(height):
+        half = (width * row) // (2 * height)
+        oled.hline(cx - half, top + row, 2 * half + 1, 1)
+
+def tree(cx=64):
+    triangle(cx, 12, 14, 26)
+    triangle(cx, 20, 16, 38)
+    triangle(cx, 30, 18, 52)
+    oled.fill_rect(cx - 4, 48, 9, 8, 1)
+    for dx, dy in ((0, -3), (-1, -2), (0, -2), (1, -2), (-2, -1), (-1, -1),
+                   (0, -1), (1, -1), (2, -1), (-1, 0), (1, 0)):
+        oled.pixel(cx + dx, 10 + dy, 1)
+
+flakes = [[random.randint(0, 127), random.randint(0, 63), random.choice((1, 1, 2))] for _ in range(30)]
+
+while True:
+    oled.fill(0)
+    tree()
+    for f in flakes:
+        f[1] += f[2]
+        f[0] = (f[0] + random.choice((-1, 0, 0, 1))) % 128
+        if f[1] > 63:
+            f[0], f[1] = random.randint(0, 127), 0
+        oled.pixel(f[0], f[1], 1)
+    oled.show()
+    time.sleep_ms(40)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>The I2C bus: SDA, SCL, addresses, <code>scan()</code>.</li>
+  <li>Installing a driver with Thonny or <code>mip</code>.</li>
+  <li>Frame buffers and the drawing API: <code>text</code>, <code>pixel</code>, <code>hline</code>, <code>line</code>, <code>rect</code>, <code>fill_rect</code>, <code>show</code>.</li>
+  <li>Simple animation: clear, update, draw, show, repeat.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: a scrolling light graph</h2>
+<p>Remember Day 8's photoresistor? Turn the OLED into an oscilloscope-style plotter for it:</p>
+<ol>
+  <li>The top 16 rows show the current value as a number and a percentage, e.g. <code>Light 73%</code>.</li>
+  <li>The area below (rows 16–63) is a graph: every 100 ms, shift it one pixel to the left and draw the newest value as a vertical line at the right edge.</li>
+  <li>Draw a dotted line at the average of everything currently on the graph.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Keep a list of the last 128 values; redraw the graph from the list each frame (that's simpler than scrolling pixels). Map a value 0…1 to a y position with <code>y = 63 - int(v * 47)</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>Redrawing everything from a list each frame keeps the code simple and makes extras like the average line easy. 128 columns × a few drawing calls is fast enough for 10 frames per second.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, I2C, ADC
+from ssd1306 import SSD1306_I2C
+import time
+
+DARK_IS_HIGH = True               # as on Day 8
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+oled = SSD1306_I2C(128, 64, i2c)
+ldr = ADC(26)
+history = []
+
+def light():
+    v = sum(ldr.read_u16() for _ in range(8)) / 8 / 65535
+    return 1 - v if DARK_IS_HIGH else v
+
+def y_of(v):
+    return 63 - int(v * 47)       # graph area: rows 16..63
+
+while True:
+    v = light()
+    history = (history + [v])[-128:]
+
+    oled.fill(0)
+    oled.text("Light {:3d}%".format(int(v * 100)), 0, 4)
+    x0 = 128 - len(history)
+    for i, h in enumerate(history):
+        oled.vline(x0 + i, y_of(h), 64 - y_of(h), 1)
+    avg = sum(history) / len(history)
+    ya = y_of(avg)
+    for x in range(0, 128, 4):
+        i = x - x0
+        inside = i >= 0 and ya >= y_of(history[i])   # is this spot inside the filled graph?
+        oled.pixel(x, ya, 0 if inside else 1)
+    oled.show()
+    time.sleep_ms(100)
+</script>
+<p>The dotted average line is drawn in black where it crosses the filled graph and in white above it, so it's visible either way.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

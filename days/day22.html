@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 22 · Infrared Remote</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="22">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 22</p>
+  <h1><span class="daynum">22</span>Infrared Remote</h1>
+  <p class="lede">Every TV remote sends invisible light pulses in a secret code. Today you'll capture those pulses, decode the most common protocol (NEC) yourself, and make the Pico <i>send</i> codes with its own IR LED.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-022 IR receiver</li>
+  <li>KY-005 IR transmitter</li>
+  <li>1 × 220 Ω resistor</li>
+  <li>Any TV / media remote control</li>
+  <li>7 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How IR remotes work</h2>
+<p>The remote's IR LED doesn't simply switch on and off — when "on", it flickers at <b>38 000 times per second</b> (the <b>carrier</b>). The receiver (a VS1838B-type chip on the KY-022) only reacts to light flickering at exactly that rate, so sunlight and lamps don't confuse it. Its output is the "envelope": <b>LOW</b> while the carrier is present, <b>HIGH</b> otherwise.</p>
+<p>The <b>NEC protocol</b> (used by many cheap remotes) sends: a 9 ms burst, a 4.5 ms pause, then 32 bits. Each bit is a 562 µs burst followed by a pause: short (562 µs) = 0, long (1687 µs) = 1. The 32 bits are: address, inverted address, command, inverted command — the inverted copies let the receiver detect errors.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<p>The KY-005's LED has no resistor on most boards, so we add 220 Ω (the range will be about a metre — plenty for testing).</p>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "rx", "name": "KY-022 IR receiver", "col": 30, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#111" },
+    { "id": "tx", "name": "KY-005 IR transmitter", "col": 40, "pins": ["S", "mid", "-"], "icon": "led", "iconColor": "#b39ddb" }
+  ],
+  "resistors": [ { "id": "R1", "col": 30 } ],
+  "wires": [
+    { "from": "GP16", "to": "rx.S", "color": "blue", "note": "receiver output" },
+    { "from": "rx.+", "to": "+" },
+    { "from": "rx.-", "to": "-" },
+    { "from": "GP22", "to": "R1.a", "color": "purple" },
+    { "from": "R1.b", "to": "tx.S", "color": "purple", "note": "IR LED" },
+    { "from": "tx.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Capture the pulses</h3>
+<p>An interrupt records the time of every edge. When no edge has arrived for 20 ms, the message is complete and we convert timestamps into durations.</p>
+<script type="text/x-python">
+from machine import Pin, PWM
+import time
+
+rx = Pin(16, Pin.IN)
+edges = []
+
+def on_edge(pin):
+    edges.append(time.ticks_us())
+
+rx.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_edge)
+
+def capture():
+    """Wait for a complete burst; return list of durations in µs (mark, space, mark, ...)."""
+    edges.clear()
+    while not edges or time.ticks_diff(time.ticks_us(), edges[-1]) < 20000:
+        time.sleep_ms(5)
+    t = list(edges)
+    return [time.ticks_diff(b, a) for a, b in zip(t, t[1:])]
+
+print("Press a button on your remote...")
+d = capture()
+print(len(d), "durations:", d[:10], "...")
+</script>
+<script type="text/x-output">
+67 durations: [9012, 4475, 589, 540, 590, 538, 591, 1650, 588, 541] ...
+</script>
+<p>9 ms, 4.5 ms, then pairs of ~560 and ~560/~1690 — that's NEC! (67 = 1 leader pair + 32 bit pairs + 1 final burst.) Other remotes (Sony, RC5, Samsung…) show different patterns.</p>
+
+<h3>2. Decode NEC</h3>
+<p>We check the leader, then read 32 spaces: long = 1. NEC sends the least significant bit first, so bit <i>i</i> goes to position <i>i</i>.</p>
+<script type="text/x-python">
+def near(value, target, tol=0.3):
+    return abs(value - target) <= target * tol
+
+def decode_nec(d):
+    if len(d) < 2 or not near(d[0], 9000):
+        return None
+    if near(d[1], 2250):
+        return "repeat"                       # button held down
+    if not near(d[1], 4500) or len(d) < 67:
+        return None
+    bits = 0
+    for i in range(32):
+        space = d[3 + 2 * i]
+        if space > 1100:
+            bits |= 1 << i
+    addr, addr_inv = bits & 0xFF, (bits >> 8) & 0xFF
+    cmd, cmd_inv = (bits >> 16) & 0xFF, (bits >> 24) & 0xFF
+    if cmd ^ cmd_inv != 0xFF:
+        return None                           # corrupted
+    return addr, cmd
+
+while True:
+    result = decode_nec(capture())
+    print(result)
+</script>
+<p>Press different buttons and write down their command numbers. (Some remotes use "extended NEC" where address and inverted address don't match — that's why we only check the command.)</p>
+
+<h3>3. Make the Pico a transmitter</h3>
+<p>To send, we need a 38 kHz carrier — PWM with <code>freq(38000)</code> and about ⅓ duty cycle. Switching the duty between ⅓ and 0 creates bursts and pauses. Timing matters, so we use absolute deadlines with <code>ticks_us</code> rather than <code>sleep_us</code> (which would add up small errors).</p>
+<script type="text/x-python">
+ir = PWM(Pin(22))
+ir.freq(38000)
+ir.duty_u16(0)
+ON = 65535 // 3
+
+def send_raw(durations):
+    t = time.ticks_us()
+    for i, d in enumerate(durations):
+        ir.duty_u16(ON if i % 2 == 0 else 0)      # even = mark, odd = space
+        t = time.ticks_add(t, d)
+        while time.ticks_diff(t, time.ticks_us()) > 0:
+            pass
+    ir.duty_u16(0)
+
+def nec_durations(addr, cmd):
+    d = [9000, 4500]
+    data = addr | ((addr ^ 0xFF) << 8) | (cmd << 16) | ((cmd ^ 0xFF) << 24)
+    for i in range(32):
+        d += [562, 1687 if (data >> i) & 1 else 562]
+    d.append(562)                                  # final burst
+    return d
+
+def send_nec(addr, cmd):
+    send_raw(nec_durations(addr, cmd))
+</script>
+
+<h3>4. Loopback test</h3>
+<p>Bend the IR LED so it points at the receiver (or hold a white card above both to reflect the light). The Pico now talks to itself:</p>
+<script type="text/x-python">
+for cmd in (0x45, 0x46, 0x47):
+    edges.clear()
+    send_nec(0x00, cmd)
+    time.sleep_ms(30)
+    t = list(edges)
+    print(hex(cmd), "->", decode_nec([time.ticks_diff(b, a) for a, b in zip(t, t[1:])]))
+</script>
+<div class="tip"><p>Can't see whether the IR LED works? Look at it through your phone camera while sending — it flashes purple-white on screen.</p></div>
+
+<script type="text/x-python" data-title="Full program — day22 main.py (remote-controlled LED)">
+from machine import Pin
+import time
+
+rx = Pin(16, Pin.IN)
+led = Pin("LED", Pin.OUT)
+edges = []
+ACTIONS = {}            # fill in your remote's codes, e.g. {0x45: "on", 0x46: "off", 0x47: "toggle"}
+
+def on_edge(pin):
+    edges.append(time.ticks_us())
+
+rx.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_edge)
+
+def capture():
+    edges.clear()
+    while not edges or time.ticks_diff(time.ticks_us(), edges[-1]) < 20000:
+        time.sleep_ms(5)
+    t = list(edges)
+    return [time.ticks_diff(b, a) for a, b in zip(t, t[1:])]
+
+def near(v, target, tol=0.3):
+    return abs(v - target) <= target * tol
+
+def decode_nec(d):
+    if len(d) < 67 or not near(d[0], 9000) or not near(d[1], 4500):
+        return None
+    bits = 0
+    for i in range(32):
+        if d[3 + 2 * i] > 1100:
+            bits |= 1 << i
+    cmd, cmd_inv = (bits >> 16) & 0xFF, (bits >> 24) & 0xFF
+    return (bits & 0xFF, cmd) if cmd ^ cmd_inv == 0xFF else None
+
+while True:
+    result = decode_nec(capture())
+    if result:
+        addr, cmd = result
+        action = ACTIONS.get(cmd)
+        print("address 0x{:02X} command 0x{:02X} -> {}".format(addr, cmd, action))
+        if action == "on": led.on()
+        elif action == "off": led.off()
+        elif action == "toggle": led.toggle()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Carrier modulation (38 kHz) and why it makes IR robust.</li>
+  <li>Decoding a real protocol from pulse timings; LSB-first bit packing with <code>|=</code>, <code>&lt;&lt;</code>, <code>&gt;&gt;</code>, <code>&amp;</code>, <code>^</code>.</li>
+  <li>Precise timing with absolute deadlines.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: learning universal remote</h2>
+<p>Many remotes don't use NEC. But we don't need to understand a protocol to <b>copy</b> it — just record the raw durations and play them back.</p>
+<ol>
+  <li>Add a <b>learn mode</b>: the program asks you to press a button on your remote, records the raw durations and stores them under a name you type (e.g. <code>"volume_up"</code>).</li>
+  <li>Save all learned codes to <code>remote.json</code> so they survive a restart.</li>
+  <li>Add a <b>send mode</b>: type a name and the Pico transmits it. Test it on your real TV (point the IR LED at it, closer than 1 m)!</li>
+  <li>Ignore captures with fewer than 6 durations (noise).</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>A dictionary <code>{name: [durations]}</code> converts straight to JSON. Turn off the receiver's interrupt while transmitting (<code>rx.irq(handler=None)</code>) so the Pico doesn't record its own signal, then re-enable it.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, PWM
+import time, json
+
+rx = Pin(16, Pin.IN)
+ir = PWM(Pin(22)); ir.freq(38000); ir.duty_u16(0)
+ON = 65535 // 3
+FILE = "remote.json"
+edges = []
+
+def on_edge(pin):
+    edges.append(time.ticks_us())
+
+def listen(enable):
+    rx.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_edge if enable else None)
+
+def capture(timeout_ms=10000):
+    edges.clear()
+    start = time.ticks_ms()
+    while not edges or time.ticks_diff(time.ticks_us(), edges[-1]) < 20000:
+        if not edges and time.ticks_diff(time.ticks_ms(), start) > timeout_ms:
+            return []
+        time.sleep_ms(5)
+    t = list(edges)
+    return [time.ticks_diff(b, a) for a, b in zip(t, t[1:])]
+
+def send_raw(durations):
+    listen(False)
+    t = time.ticks_us()
+    for i, d in enumerate(durations):
+        ir.duty_u16(ON if i % 2 == 0 else 0)
+        t = time.ticks_add(t, d)
+        while time.ticks_diff(t, time.ticks_us()) > 0:
+            pass
+    ir.duty_u16(0)
+    listen(True)
+
+def load():
+    try:
+        with open(FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+def save(codes):
+    with open(FILE, "w") as f:
+        json.dump(codes, f)
+
+codes = load()
+listen(True)
+print("Known codes:", list(codes))
+while True:
+    cmd = input("[l]earn, [s]end, [q]uit: ").strip().lower()
+    if cmd == "l":
+        name = input("Name for this button: ").strip()
+        print("Press the button on your remote (10 s)...")
+        d = capture()
+        if len(d) < 6:
+            print("Nothing useful received, try again.")
+            continue
+        codes[name] = d
+        save(codes)
+        print("Learned '{}' ({} pulses)".format(name, len(d)))
+    elif cmd == "s":
+        name = input("Send which? {} ".format(list(codes))).strip()
+        if name in codes:
+            send_raw(codes[name])
+            print("Sent", name)
+        else:
+            print("Unknown name")
+    elif cmd == "q":
+        break
+</script>
+<p>Some TVs expect the code twice, or need a repeat frame to react. If yours ignores a single send, try <code>send_raw(d); time.sleep_ms(40); send_raw(d)</code>.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

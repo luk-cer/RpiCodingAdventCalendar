@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 15 · Cookie Jar Guard</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="15">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 15</p>
+  <h1><span class="daynum">15</span>Cookie Jar Guard</h1>
+  <p class="lede">Invisible infrared light protects the Christmas cookies: an obstacle sensor notices approaching hands and a light barrier counts every cookie that leaves. You'll practise counting with interrupts and measuring how long things take.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-010 Light barrier (fork sensor)</li>
+  <li>KY-032 Obstacle avoidance sensor</li>
+  <li>KY-012 Active buzzer</li>
+  <li>A strip of paper or card</li>
+  <li>10 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Two kinds of infrared sensing</h2>
+<div class="grid2">
+  <div class="card"><h3>KY-010 light barrier</h3><p>An IR LED shines across the slot onto a phototransistor. Anything that blocks the slot — a piece of card, a tooth on a wheel — interrupts the beam. Printers use these to detect paper.</p></div>
+  <div class="card"><h3>KY-032 obstacle sensor</h3><p>An IR LED and receiver side by side, looking forward. If something within a few centimetres reflects the light, the output goes <b>LOW</b>. A potentiometer sets the range. The jumper on the board should be in place (it keeps the sensor enabled), so we don't need the EN pin.</p></div>
+</div>
+<div class="tip"><p>Your phone camera can see infrared! Point it at the KY-032's clear LED — you'll see it glow purple-ish on screen.</p></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "fork", "name": "KY-010 Light barrier", "col": 24, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#000" },
+    { "id": "obs", "name": "KY-032 Obstacle sensor", "col": 31, "pins": ["EN", "OUT", "+", "GND"], "icon": "pot" },
+    { "id": "bz", "name": "KY-012 Active buzzer", "col": 41, "pins": ["S", "+", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "fork.S", "color": "blue", "note": "barrier" },
+    { "from": "fork.+", "to": "+" },
+    { "from": "fork.-", "to": "-" },
+    { "from": "GP17", "to": "obs.OUT", "color": "purple", "note": "obstacle" },
+    { "from": "obs.+", "to": "+" },
+    { "from": "obs.GND", "to": "-" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.+", "to": "+" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+<p>Some KY-032 boards order their pins <code>GND + OUT EN</code> — check the labels.</p>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Test both sensors</h3>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+fork = Pin(16, Pin.IN)
+obs = Pin(17, Pin.IN)
+buzzer = Pin(15, Pin.OUT)
+
+for _ in range(60):
+    print("barrier:", fork.value(), "  obstacle:", obs.value())
+    time.sleep(0.2)
+</script>
+<p>Slide paper through the slot, wave your hand in front of the obstacle sensor. If the obstacle sensor always reads 0 or never changes, turn its potentiometer slowly until the small "obstacle" LED goes off with nothing in front, and on when your hand is about 5 cm away.</p>
+
+<h3>2. Counting with an interrupt</h3>
+<p>The KY-010 output changes when the beam is blocked. As usual we remember the idle state (empty slot) and count each time the beam gets <b>blocked</b>. An interrupt makes sure fast objects aren't missed.</p>
+<script type="text/x-python">
+CLEAR = fork.value()          # slot empty at start-up
+count = 0
+last_edge = 0
+
+def on_fork(pin):
+    global count, last_edge
+    now = time.ticks_ms()
+    if pin.value() != CLEAR and time.ticks_diff(now, last_edge) > 30:
+        count += 1
+    last_edge = now
+
+fork.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_fork)
+
+for _ in range(15):
+    print("cookies taken:", count)
+    time.sleep(1)
+</script>
+
+<h3>3. How long was the beam blocked?</h3>
+<p>Measuring the blocking time tells you about the object: a slow hand blocks it longer than a quick flick. We record the moment the beam is blocked and calculate the duration when it's clear again.</p>
+<script type="text/x-python">
+blocked_at = None
+durations = []
+
+def on_fork(pin):
+    global count, blocked_at
+    now = time.ticks_ms()
+    if pin.value() != CLEAR:
+        if blocked_at is None:
+            blocked_at = now
+    elif blocked_at is not None:
+        d = time.ticks_diff(now, blocked_at)
+        blocked_at = None
+        if d > 20:                   # ignore glitches
+            count += 1
+            durations.append(d)
+
+fork.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_fork)
+</script>
+<div class="note"><p>Appending to a list inside an interrupt handler works on the Pico because MicroPython's pin interrupts are "soft" by default (the handler runs a moment later, between normal instructions). Keep handlers small anyway.</p></div>
+
+<h3>4. The guard</h3>
+<p>A hand near the jar triggers a warning beep. Every cookie that passes the barrier is counted and reported with how long it took.</p>
+<script type="text/x-python">
+def beep(ms):
+    buzzer.on(); time.sleep_ms(ms); buzzer.off()
+
+reported = 0
+hand_was_near = False
+while True:
+    hand = obs.value() == 0
+    if hand and not hand_was_near:
+        print("👀 A hand approaches the cookie jar...")
+        beep(60)
+    hand_was_near = hand
+
+    if count > reported:
+        reported = count
+        print("Cookie #{} taken ({} ms)".format(count, durations[-1]))
+        beep(300)
+    time.sleep_ms(20)
+</script>
+
+<script type="text/x-python" data-title="Full program — day15 main.py">
+from machine import Pin
+import time
+
+fork = Pin(16, Pin.IN)
+obs = Pin(17, Pin.IN)
+buzzer = Pin(15, Pin.OUT)
+CLEAR = fork.value()
+
+count = 0
+blocked_at = None
+durations = []
+
+def on_fork(pin):
+    global count, blocked_at
+    now = time.ticks_ms()
+    if pin.value() != CLEAR:
+        if blocked_at is None:
+            blocked_at = now
+    elif blocked_at is not None:
+        d = time.ticks_diff(now, blocked_at)
+        blocked_at = None
+        if d > 20:
+            count += 1
+            durations.append(d)
+
+fork.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_fork)
+
+def beep(ms):
+    buzzer.on(); time.sleep_ms(ms); buzzer.off()
+
+reported = 0
+hand_was_near = False
+try:
+    while True:
+        hand = obs.value() == 0
+        if hand and not hand_was_near:
+            print("A hand approaches the cookie jar...")
+            beep(60)
+        hand_was_near = hand
+        if count > reported:
+            reported = count
+            print("Cookie #{} taken ({} ms)".format(count, durations[-1]))
+            beep(300)
+        time.sleep_ms(20)
+except KeyboardInterrupt:
+    buzzer.off()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Transmissive (fork) vs reflective IR sensing.</li>
+  <li>Counting events and measuring pulse durations with interrupts.</li>
+  <li>Using <code>None</code> as "not started yet".</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: Catch the cookie! (reaction game)</h2>
+<ol>
+  <li>Wait a <b>random</b> time between 2 and 6 seconds, then switch on the on-board LED and give a short beep — "Go!".</li>
+  <li>The player waves a hand in front of the obstacle sensor as fast as possible. Measure the reaction time in milliseconds.</li>
+  <li>If they wave <b>before</b> the signal, it's a false start: long beep, round doesn't count.</li>
+  <li>Play 5 rounds, then print each time, the best and the average.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p><code>random.randint(2000, 6000)</code> gives a random number of milliseconds. During the waiting period, keep checking the sensor so you can detect a false start. Measure from the "Go!" moment with <code>ticks_ms()</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time, random
+
+obs = Pin(17, Pin.IN)
+buzzer = Pin(15, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+
+def hand():
+    return obs.value() == 0
+
+def beep(ms):
+    buzzer.on(); time.sleep_ms(ms); buzzer.off()
+
+def one_round():
+    """Returns reaction time in ms, or None for a false start."""
+    while hand():                       # wait until the hand is away
+        time.sleep_ms(10)
+    wait = random.randint(2000, 6000)
+    start = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), start) < wait:
+        if hand():
+            beep(800)
+            print("False start!")
+            return None
+        time.sleep_ms(1)
+    led.on(); beep(40)
+    go = time.ticks_ms()
+    while not hand():
+        if time.ticks_diff(time.ticks_ms(), go) > 3000:
+            led.off()
+            print("Too slow - 3000 ms")
+            return 3000
+    led.off()
+    return time.ticks_diff(time.ticks_ms(), go)
+
+times = []
+print("Get ready - wave when the LED lights up!")
+while len(times) < 5:
+    t = one_round()
+    if t is not None:
+        times.append(t)
+        print("Round {}: {} ms".format(len(times), t))
+    time.sleep(1)
+
+print("Times:", times)
+print("Best: {} ms, average: {:.0f} ms".format(min(times), sum(times) / len(times)))
+</script>
+<p>Typical human reaction times are 200–300 ms. The 40 ms beep happens before timing starts, which slightly favours the player — move <code>go = time.ticks_ms()</code> above the beep for a fairer game.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

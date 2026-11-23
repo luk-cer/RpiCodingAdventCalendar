@@ -306,6 +306,11 @@
     } else if (ic === "dht") {
       el("rect", { x: cx - 13, y: cy - 16, width: 26, height: 30, rx: 2, fill: "#4fc3f7" }, g);
       for (let i = 0; i < 4; i++) el("line", { x1: cx - 8, x2: cx + 8, y1: cy - 10 + i * 7, y2: cy - 10 + i * 7, stroke: "#0277bd", "stroke-width": 2 }, g);
+    } else if (ic === "oled") {
+      el("rect", { x: geo.x + 8, y: geo.y + 20, width: geo.w - 16, height: geo.h - 46, rx: 2, fill: "#05070a", stroke: "#555" }, g);
+      text(g, cx, geo.y + 20 + (geo.h - 46) / 2 + 3, "128×64", { class: "mod-pin", "text-anchor": "middle", fill: "#4fc3f7" });
+    } else if (ic === "chip") {
+      el("rect", { x: cx - 8, y: cy - 10, width: 16, height: 16, rx: 1, fill: m.iconColor || "#cfd8dc", stroke: "#0006" }, g);
     } else if (ic === "mic") {
       el("rect", { x: cx - 20, y: cy - 8, width: 12, height: 12, rx: 1, fill: "#1e64c8" }, g);
       el("circle", { cx: cx + 10, cy: cy - 2, r: m.big ? 10 : 6, fill: "#212121", stroke: "#9e9e9e" }, g);
@@ -321,8 +326,14 @@
       el("rect", { x: x - 3, y: ROWY.j - 3, width: 6, height: 6, class: "mod-pinhead" }, g);
     });
     el("rect", { x: geo.x, y: geo.y, width: geo.w, height: geo.h, rx: 5, fill: m.color || "#1b2533", class: "mod-pcb" }, g);
+    const vertical = m.pins.some((p) => String(p).length > 2);
     m.pins.forEach((p, i) => {
-      text(g, colX(m.col + i), geo.y + 13, pretty(p), { class: "mod-pin", "text-anchor": "middle" });
+      const x = colX(m.col + i);
+      if (vertical) {
+        text(g, x + 3, geo.y + 5, pretty(p), { class: "mod-pin", "text-anchor": "end", transform: "rotate(-90 " + (x + 3) + " " + (geo.y + 5) + ")" });
+      } else {
+        text(g, x, geo.y + 13, pretty(p), { class: "mod-pin", "text-anchor": "middle" });
+      }
     });
     drawIcon(g, m, geo);
     const name = m.name;

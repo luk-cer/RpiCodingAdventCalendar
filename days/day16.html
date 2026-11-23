@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 16 · Candy-Cane Barcodes</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="16">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 16</p>
+  <h1><span class="daynum">16</span>Candy-Cane Barcodes</h1>
+  <p class="lede">The line-tracking sensor that steers robots along black tape can also read stripes. Today you'll swipe it over printed stripes, measure each one — and in the exercise decode your own secret barcode, beep and all.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-033 Line tracking sensor</li>
+  <li>KY-006 Passive buzzer</li>
+  <li>Printed stripes (below) or a black marker and paper</li>
+  <li>6 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How it sees black</h2>
+<p>The KY-033 shines infrared light down and measures how much comes back. White paper reflects a lot; black ink absorbs it. A comparator turns that into a digital signal, and the potentiometer sets where "black" starts. It works best 2–10 mm above the paper.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "line", "name": "KY-033 Line tracker", "col": 28, "pins": ["G", "+", "S"], "icon": "pot" },
+    { "id": "bz", "name": "KY-006 Passive buzzer", "col": 38, "pins": ["S", "mid", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "line.G", "to": "-" },
+    { "from": "line.+", "to": "+" },
+    { "from": "GP16", "to": "line.S", "color": "blue" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+<div class="tip"><p>Use longer jumper wires (or female-to-male wires) for the KY-033 so you can move it over the paper while the rest stays on the breadboard.</p></div>
+
+<h2><span class="em">🖨️</span>Print this</h2>
+<p>Print this page (or draw it with a thick marker). The stripes encode a letter: thin bar = 0, thick bar = 1. You'll decode it in the exercise.</p>
+<div class="card" style="text-align:center">
+<svg viewBox="0 0 250 140" style="width:min(100%,420px);background:#fff" role="img" aria-label="Printable barcode with eight bars">
+  <rect x="20" y="10" width="10" height="110" fill="#000"/>
+  <rect x="42" y="10" width="25" height="110" fill="#000"/>
+  <rect x="79" y="10" width="10" height="110" fill="#000"/>
+  <rect x="101" y="10" width="10" height="110" fill="#000"/>
+  <rect x="123" y="10" width="10" height="110" fill="#000"/>
+  <rect x="145" y="10" width="10" height="110" fill="#000"/>
+  <rect x="167" y="10" width="10" height="110" fill="#000"/>
+  <rect x="189" y="10" width="25" height="110" fill="#000"/>
+  <text x="125" y="134" font-size="9" text-anchor="middle" fill="#555">swipe left → right · print ~12 cm wide</text>
+</svg>
+</div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Black or white?</h3>
+<script type="text/x-python">
+from machine import Pin, PWM
+import time
+
+line = Pin(16, Pin.IN)
+for _ in range(50):
+    print(line.value())
+    time.sleep(0.1)
+</script>
+<p>Hold the sensor over white paper, then over a black bar. Adjust the potentiometer until the board LED reliably switches between the two. We'll store the white level at start-up, like on previous days:</p>
+<script type="text/x-python">
+WHITE = line.value()          # start with the sensor over white paper
+
+def on_black():
+    return line.value() != WHITE
+</script>
+
+<h3>2. A scanner beep</h3>
+<script type="text/x-python">
+bz = PWM(Pin(15))
+bz.duty_u16(0)
+
+def beep(freq=2500, ms=60):
+    bz.freq(freq); bz.duty_u16(32768)
+    time.sleep_ms(ms)
+    bz.duty_u16(0)
+
+beep()
+</script>
+
+<h3>3. Recording edges</h3>
+<p>To measure stripes we need the exact moments the signal changes. An interrupt stores each change as <code>(time in µs, is_black)</code>.</p>
+<script type="text/x-python">
+edges = []
+
+def on_edge(pin):
+    edges.append((time.ticks_us(), pin.value() != WHITE))
+
+line.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_edge)
+</script>
+
+<h3>4. From edges to bar widths</h3>
+<p>A black bar starts at a "became black" edge and ends at the next "became white" edge. Their difference is how long the bar was under the sensor. A swipe is finished when nothing has happened for half a second.</p>
+<script type="text/x-python">
+def bars_from(edge_list):
+    widths = []
+    start = None
+    for t, black in edge_list:
+        if black and start is None:
+            start = t
+        elif not black and start is not None:
+            widths.append(time.ticks_diff(t, start))
+            start = None
+    return widths
+
+def wait_for_swipe():
+    edges.clear()
+    while True:
+        if edges and time.ticks_diff(time.ticks_us(), edges[-1][0]) > 500_000:
+            return bars_from(list(edges))
+        time.sleep_ms(20)
+</script>
+
+<h3>5. Scan!</h3>
+<p>Swipe steadily across the printed stripes. Each scan prints how many bars were found and their widths in milliseconds. Notice the thick bars come out roughly 2.5× wider — if your swipe speed was even.</p>
+<script type="text/x-python">
+while True:
+    widths = wait_for_swipe()
+    beep()
+    print("{} bars:".format(len(widths)), [w // 1000 for w in widths], "ms")
+</script>
+
+<script type="text/x-python" data-title="Full program — day16 main.py">
+from machine import Pin, PWM
+import time
+
+line = Pin(16, Pin.IN)
+bz = PWM(Pin(15)); bz.duty_u16(0)
+WHITE = line.value()
+edges = []
+
+def on_edge(pin):
+    edges.append((time.ticks_us(), pin.value() != WHITE))
+
+line.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_edge)
+
+def beep(freq=2500, ms=60):
+    bz.freq(freq); bz.duty_u16(32768); time.sleep_ms(ms); bz.duty_u16(0)
+
+def bars_from(edge_list):
+    widths, start = [], None
+    for t, black in edge_list:
+        if black and start is None:
+            start = t
+        elif not black and start is not None:
+            widths.append(time.ticks_diff(t, start))
+            start = None
+    return widths
+
+def wait_for_swipe():
+    edges.clear()
+    while True:
+        if edges and time.ticks_diff(time.ticks_us(), edges[-1][0]) > 500_000:
+            return bars_from(list(edges))
+        time.sleep_ms(20)
+
+print("Ready - swipe over the stripes")
+while True:
+    widths = wait_for_swipe()
+    beep()
+    print("{} bars:".format(len(widths)), [w // 1000 for w in widths], "ms")
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Reflective IR sensors and adjusting comparator thresholds.</li>
+  <li>Recording timestamps of edges, then post-processing them into widths.</li>
+  <li>Detecting "end of input" with a timeout.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: decode the secret letter</h2>
+<ol>
+  <li>A valid code has exactly <b>8 bars</b>. Each thick bar is a <code>1</code>, each thin bar a <code>0</code>, first bar = most significant bit.</li>
+  <li>Since swipe speed varies, don't use a fixed width. Use the midpoint between the narrowest and widest bar as the threshold.</li>
+  <li>Turn the 8 bits into a number and the number into a character with <code>chr()</code>. Print it and play a happy two-tone beep. Wrong number of bars → low error buzz.</li>
+  <li>Bonus: make your own barcode for your initial. (<code>ord("L")</code> gives its number; <code>"{:08b}".format(76)</code> its bits.)</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Build the number bit by bit: <code>value = value * 2 + bit</code> (or <code>value = (value &lt;&lt; 1) | bit</code>). What happens if all 8 bars are the same width? Think about that edge case.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The relative threshold makes the decoder tolerant to how fast you swipe. If every bar is about the same width, the code can't contain both 0s and 1s, so we reject it (that would be <code>0x00</code> or <code>0xFF</code>, which aren't letters anyway).</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, PWM
+import time
+
+line = Pin(16, Pin.IN)
+bz = PWM(Pin(15)); bz.duty_u16(0)
+WHITE = line.value()
+edges = []
+
+def on_edge(pin):
+    edges.append((time.ticks_us(), pin.value() != WHITE))
+
+line.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_edge)
+
+def tone(freq, ms):
+    bz.freq(freq); bz.duty_u16(32768); time.sleep_ms(ms); bz.duty_u16(0)
+
+def bars_from(edge_list):
+    widths, start = [], None
+    for t, black in edge_list:
+        if black and start is None:
+            start = t
+        elif not black and start is not None:
+            widths.append(time.ticks_diff(t, start))
+            start = None
+    return widths
+
+def wait_for_swipe():
+    edges.clear()
+    while True:
+        if edges and time.ticks_diff(time.ticks_us(), edges[-1][0]) > 500_000:
+            return bars_from(list(edges))
+        time.sleep_ms(20)
+
+def decode(widths):
+    if len(widths) != 8:
+        return None, "need 8 bars, got {}".format(len(widths))
+    lo, hi = min(widths), max(widths)
+    if hi < lo * 1.5:
+        return None, "can't tell thick from thin"
+    threshold = (lo + hi) / 2
+    value = 0
+    for w in widths:
+        value = value * 2 + (1 if w > threshold else 0)
+    return value, "{:08b}".format(value)
+
+print("Swipe left to right!")
+while True:
+    value, info = decode(wait_for_swipe())
+    if value is None:
+        print("Error:", info)
+        tone(200, 400)
+    else:
+        print("Bits", info, "=", value, "=", repr(chr(value)))
+        tone(1800, 80); tone(2700, 120)
+</script>
+<p>The printed code is <code>01000001</code> = 65 = <code>"A"</code>. Swiping right-to-left reverses the bits — can you detect and correct that automatically? (Hint: add a start marker, like real barcodes do.)</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

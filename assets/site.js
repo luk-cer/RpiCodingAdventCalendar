@@ -27,6 +27,9 @@
     { n: 22, title: "Infrared Remote",            parts: "KY-022, KY-005" },
     { n: 23, title: "Heartbeat",                  parts: "KY-039" },
     { n: 24, title: "Wi-Fi Christmas Tree",       parts: "Pico W Wi-Fi, KY-001, KY-016, KY-006" },
+    { n: 25, title: "Bonus: OLED Display",        parts: "SSD1306 OLED, KY-018", bonus: true },
+    { n: 26, title: "Bonus: Weather Station",     parts: "BME280, SSD1306 OLED", bonus: true },
+    { n: 27, title: "Bonus: Digital Snow Globe",  parts: "MPU6050, SSD1306 OLED", bonus: true },
   ];
   window.ADVENT_DAYS = DAYS;
 
@@ -146,7 +149,7 @@
         const nx = day === 0 ? DAYS[0] : next;
         extra = "<div class='complete'><b>🎉 " + (day === 0 ? "Setup complete!" : "Day " + day + " complete!") +
           "</b> Leave today's circuit on the breadboard if you like — many parts come back later." +
-          (nx ? "<br>Tomorrow: <b>" + nx.title + "</b> <span class='muted'>(" + nx.parts + ")</span>" : "<br>That's the whole calendar. Merry Christmas! 🎄") +
+          (nx ? "<br>" + (nx.bonus ? "Next" : "Tomorrow") + ": <b>" + nx.title + "</b> <span class='muted'>(" + nx.parts + ")</span>" : "<br>That's the whole calendar. Merry Christmas! 🎄") +
           "</div>";
       }
       s.outerHTML = extra + html;

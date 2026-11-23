@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 19 · Clap Your Hands</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="19">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 19</p>
+  <h1><span class="daynum">19</span>Clap Your Hands</h1>
+  <p class="lede">Two microphone modules turn the Pico into a sound-level meter for carol singing. You'll sample a fast-changing signal, measure its loudness, show it on the traffic light — and build a clap switch.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-037 Big microphone module</li>
+  <li>KY-038 Small microphone module</li>
+  <li>LED Traffic Light module</li>
+  <li>13 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How the microphone modules work</h2>
+<p>Each has an electret microphone (the silver can), an amplifier/comparator chip and a potentiometer. <b>AO</b> outputs the sound wave itself: a voltage that wiggles up and down around a middle value hundreds or thousands of times a second. <b>DO</b> goes high when the sound is louder than the threshold set by the potentiometer. The big KY-037 is more sensitive than the small KY-038.</p>
+<div class="note"><p>Adjust each potentiometer (many turns!) until the module's DO LED is <b>just off</b> in a quiet room. A clap should then make it flash.</p></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "big", "name": "KY-037 Big microphone", "col": 24, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "mic", "big": true },
+    { "id": "small", "name": "KY-038 Small microphone", "col": 32, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "mic" },
+    { "id": "tl", "name": "Traffic Light module", "col": 41, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" }
+  ],
+  "wires": [
+    { "from": "GP26", "to": "big.AO", "color": "white", "note": "ADC0" },
+    { "from": "big.G", "to": "-" },
+    { "from": "big.+", "to": "+" },
+    { "from": "GP16", "to": "big.DO", "color": "blue" },
+    { "from": "GP27", "to": "small.AO", "color": "pink", "note": "ADC1" },
+    { "from": "small.G", "to": "-" },
+    { "from": "small.+", "to": "+" },
+    { "from": "GP17", "to": "small.DO", "color": "purple" },
+    { "from": "GP15", "to": "tl.R", "color": "orange" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow" },
+    { "from": "GP13", "to": "tl.G", "color": "green" },
+    { "from": "tl.GND", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. One reading means nothing</h3>
+<script type="text/x-python">
+from machine import Pin, ADC
+import time
+
+big = ADC(26)
+small = ADC(27)
+for _ in range(10):
+    print(big.read_u16())
+</script>
+<p>You get roughly the same middle value even while talking. That's because one sample is just one point on a fast wave — it could be the top, bottom or middle. To measure <b>loudness</b> we need many samples quickly and look at how far they spread.</p>
+
+<h3>2. Peak-to-peak loudness</h3>
+<p>We grab 300 samples as fast as possible (about 10 ms of sound) and take the difference between the highest and lowest value. Silence = small spread, loud = large spread.</p>
+<script type="text/x-python">
+def loudness(adc, n=300):
+    lo, hi = 65535, 0
+    for _ in range(n):
+        v = adc.read_u16()
+        if v < lo: lo = v
+        if v > hi: hi = v
+    return hi - lo
+
+for _ in range(100):
+    print(loudness(big), loudness(small))   # watch the plotter while you talk
+    time.sleep_ms(20)
+</script>
+<p>Compare the two microphones: the KY-037's line should jump higher for the same sound.</p>
+
+<h3>3. A smoother level</h3>
+<p>Speech is choppy. A "fast attack, slow release" filter rises immediately with loud sounds but falls slowly — like the bouncing bars on a music player.</p>
+<script type="text/x-python">
+level = 0
+
+def update_level():
+    global level
+    now = loudness(big)
+    if now > level:
+        level = now                     # attack: jump up
+    else:
+        level = level * 0.9 + now * 0.1 # release: drift down
+    return level
+</script>
+
+<h3>4. Traffic-light VU meter</h3>
+<p>Green for normal, green + yellow for loud, all three for very loud. Find good thresholds by watching the numbers while you sing.</p>
+<script type="text/x-python">
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+QUIET, LOUD, VERY_LOUD = 1500, 6000, 15000
+
+def meter(v):
+    green.value(v > QUIET)
+    yellow.value(v > LOUD)
+    red.value(v > VERY_LOUD)
+
+for _ in range(500):
+    meter(update_level())
+</script>
+
+<h3>5. Counting claps with DO</h3>
+<p>The digital outputs do the threshold work in hardware. An interrupt counts claps on the big microphone; a clap makes DO flicker for a few ms, so we ignore edges within 150 ms of the last one.</p>
+<script type="text/x-python">
+do_big = Pin(16, Pin.IN)
+claps = 0
+last_clap = 0
+
+def on_clap(pin):
+    global claps, last_clap
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_clap) > 150:
+        claps += 1
+        last_clap = now
+
+do_big.irq(trigger=Pin.IRQ_RISING, handler=on_clap)
+</script>
+
+<script type="text/x-python" data-title="Full program — day19 main.py">
+from machine import Pin, ADC
+import time
+
+big = ADC(26)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+do_big = Pin(16, Pin.IN)
+QUIET, LOUD, VERY_LOUD = 1500, 6000, 15000
+
+def loudness(adc, n=300):
+    lo, hi = 65535, 0
+    for _ in range(n):
+        v = adc.read_u16()
+        if v < lo: lo = v
+        if v > hi: hi = v
+    return hi - lo
+
+claps = 0
+last_clap = 0
+
+def on_clap(pin):
+    global claps, last_clap
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_clap) > 150:
+        claps += 1
+        last_clap = now
+
+do_big.irq(trigger=Pin.IRQ_RISING, handler=on_clap)
+
+level = 0
+seen = 0
+try:
+    while True:
+        now = loudness(big)
+        level = now if now > level else level * 0.9 + now * 0.1
+        green.value(level > QUIET)
+        yellow.value(level > LOUD)
+        red.value(level > VERY_LOUD)
+        if claps != seen:
+            seen = claps
+            print("Clap! total:", claps)
+except KeyboardInterrupt:
+    red.off(); yellow.off(); green.off()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Sound is a fast wave — single samples don't tell you loudness, the spread of many does.</li>
+  <li>Peak-to-peak measurement; attack/release smoothing.</li>
+  <li>Hardware thresholds (DO) vs software thresholds (AO).</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: double-clap Christmas tree switch</h2>
+<p>The famous "clap on, clap off" gadget — but single claps (or a door slamming) must not trigger it.</p>
+<ol>
+  <li>Toggle the on-board LED (our Christmas tree) only on a <b>double clap</b>: two claps with a gap between 0.2 and 0.8 seconds.</li>
+  <li>Three or more quick claps in a row should <b>not</b> count as a double clap.</li>
+  <li>Show the tree's state on the traffic light too: green = tree on, red = tree off.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Store clap timestamps in the interrupt. In the main loop, wait until 0.8 s have passed after the last clap (the "sequence" is finished), then look at how many claps there were and the gap between them.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>Waiting until the sequence is over before deciding is the key: only then do we know whether it was 1, 2 or more claps. That costs 0.8 s of delay, which is why real clap switches feel slightly sluggish.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+do_big = Pin(16, Pin.IN)
+tree = Pin("LED", Pin.OUT)
+red, green = Pin(15, Pin.OUT), Pin(13, Pin.OUT)
+claps = []
+
+def on_clap(pin):
+    now = time.ticks_ms()
+    if not claps or time.ticks_diff(now, claps[-1]) > 150:
+        claps.append(now)
+
+do_big.irq(trigger=Pin.IRQ_RISING, handler=on_clap)
+
+tree_on = False
+
+def show_tree():
+    tree.value(tree_on)
+    green.value(tree_on)
+    red.value(not tree_on)
+
+show_tree()
+while True:
+    if claps and time.ticks_diff(time.ticks_ms(), claps[-1]) > 800:
+        sequence = list(claps)
+        claps.clear()
+        if len(sequence) == 2:
+            gap = time.ticks_diff(sequence[1], sequence[0])
+            if 200 <= gap <= 800:
+                tree_on = not tree_on
+                print("Double clap ({} ms) - tree {}".format(gap, "ON" if tree_on else "off"))
+                show_tree()
+            else:
+                print("Two claps but gap {} ms - ignored".format(gap))
+        else:
+            print("{} clap(s) - ignored".format(len(sequence)))
+    time.sleep_ms(20)
+</script>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

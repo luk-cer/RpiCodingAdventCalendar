@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 13 · Present Door Alarm</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="13">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 13</p>
+  <h1><span class="daynum">13</span>Present Door Alarm</h1>
+  <p class="lede">Someone keeps peeking into the present cupboard! Two magnetic reed switches and the active buzzer become a proper alarm system — with arming, an alarm siren and an event log.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-021 Mini reed switch</li>
+  <li>KY-025 Reed module (red board)</li>
+  <li>KY-012 Active buzzer</li>
+  <li>A magnet</li>
+  <li>10 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How a reed switch works</h2>
+<p>Inside the little glass tube are two thin metal reeds with a gap between them. A magnet nearby magnetises the reeds, they attract each other and snap together — the switch closes. Take the magnet away and they spring apart. Burglar alarms use exactly this: the switch on the door frame, the magnet on the door.</p>
+<p>The <b>KY-021</b> is just the reed switch plus a resistor. The <b>KY-025</b> adds a comparator (like Day 12's KY-028), giving a clean digital output on <b>DO</b> and an LED that shows the state.</p>
+<div class="warn"><p>The glass tube is fragile. Don't bend its legs close to the glass.</p></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "reed1", "name": "KY-021 Mini reed", "col": 24, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#e0f7fa" },
+    { "id": "reed2", "name": "KY-025 Reed module", "col": 31, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "pot" },
+    { "id": "bz", "name": "KY-012 Active buzzer", "col": 40, "pins": ["S", "+", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "reed1.S", "color": "blue", "note": "door 1" },
+    { "from": "reed1.+", "to": "+" },
+    { "from": "reed1.-", "to": "-" },
+    { "from": "reed2.G", "to": "-" },
+    { "from": "reed2.+", "to": "+" },
+    { "from": "GP17", "to": "reed2.DO", "color": "purple", "note": "door 2" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.+", "to": "+" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Watch the reeds react</h3>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+door1 = Pin(16, Pin.IN)
+door2 = Pin(17, Pin.IN)
+
+for _ in range(50):
+    print("door1:", door1.value(), "door2:", door2.value())
+    time.sleep(0.2)
+</script>
+<p>Move the magnet towards and away from each sensor. Notice how close it has to be, and that the reed reacts best when the magnet lies along the glass tube. If the KY-025 doesn't react, turn its potentiometer until the board LED changes when the magnet comes near.</p>
+
+<h3>2. A Door class</h3>
+<p>Both sensors behave the same way from the program's point of view: <i>open</i> or <i>closed</i>. We hide the details in a class. At start-up the magnet must be in place (doors closed) — just like Day 2, we remember that level as "closed".</p>
+<script type="text/x-python">
+class Door:
+    def __init__(self, name, pin_no):
+        self.name = name
+        self.pin = Pin(pin_no, Pin.IN)
+        self.closed_level = self.pin.value()     # learned with the magnet in place
+        self.was_open = False
+
+    def is_open(self):
+        return self.pin.value() != self.closed_level
+
+    def just_opened(self):
+        """True only once, at the moment the door opens"""
+        now = self.is_open()
+        edge = now and not self.was_open
+        self.was_open = now
+        return edge
+
+print("Put magnets on both doors... ")
+time.sleep(3)
+doors = [Door("cupboard", 16), Door("drawer", 17)]
+print("Learned closed levels:", [d.closed_level for d in doors])
+</script>
+<p>Only one magnet? Hold it so that it's near <i>both</i> sensors at start-up, or start with one sensor and remove the other from the list.</p>
+
+<h3>3. Sounds</h3>
+<script type="text/x-python">
+buzzer = Pin(15, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+
+def chirp(n=1):
+    for _ in range(n):
+        buzzer.on(); time.sleep_ms(40); buzzer.off(); time.sleep_ms(80)
+
+def siren(seconds):
+    end = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
+    while time.ticks_diff(end, time.ticks_ms()) > 0:
+        buzzer.on(); led.on();  time.sleep_ms(150)
+        buzzer.off(); led.off(); time.sleep_ms(100)
+
+chirp(2)
+</script>
+
+<h3>4. Event log</h3>
+<p><code>time.localtime()</code> gives the Pico's clock as a tuple <code>(year, month, day, hour, minute, second, …)</code>. When Thonny is connected it sets the Pico's clock for you, so the times are real.</p>
+<script type="text/x-python">
+log = []
+
+def record(event):
+    y, mo, d, h, mi, s = time.localtime()[:6]
+    line = "{:02d}:{:02d}:{:02d} {}".format(h, mi, s, event)
+    log.append(line)
+    print(line)
+
+record("system started")
+</script>
+
+<h3>5. The alarm</h3>
+<script type="text/x-python">
+record("armed")
+chirp(3)
+while True:
+    for d in doors:
+        if d.just_opened():
+            record(d.name + " opened!")
+            siren(3)
+        led.value(any(d.is_open() for d in doors))
+    time.sleep_ms(50)
+</script>
+<p>Type <code>print("\n".join(log))</code> in the shell after stopping to see everything that happened.</p>
+
+<script type="text/x-python" data-title="Full program — day13 main.py">
+from machine import Pin
+import time
+
+class Door:
+    def __init__(self, name, pin_no):
+        self.name = name
+        self.pin = Pin(pin_no, Pin.IN)
+        self.closed_level = self.pin.value()
+        self.was_open = False
+
+    def is_open(self):
+        return self.pin.value() != self.closed_level
+
+    def just_opened(self):
+        now = self.is_open()
+        edge = now and not self.was_open
+        self.was_open = now
+        return edge
+
+buzzer = Pin(15, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+log = []
+
+def chirp(n=1):
+    for _ in range(n):
+        buzzer.on(); time.sleep_ms(40); buzzer.off(); time.sleep_ms(80)
+
+def siren(seconds):
+    end = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
+    while time.ticks_diff(end, time.ticks_ms()) > 0:
+        buzzer.on(); led.on();  time.sleep_ms(150)
+        buzzer.off(); led.off(); time.sleep_ms(100)
+
+def record(event):
+    h, mi, s = time.localtime()[3:6]
+    line = "{:02d}:{:02d}:{:02d} {}".format(h, mi, s, event)
+    log.append(line)
+    print(line)
+
+print("Close all doors (magnets in place)...")
+time.sleep(3)
+doors = [Door("cupboard", 16), Door("drawer", 17)]
+record("armed")
+chirp(3)
+try:
+    while True:
+        for d in doors:
+            if d.just_opened():
+                record(d.name + " opened!")
+                siren(3)
+        led.value(any(d.is_open() for d in doors))
+        time.sleep_ms(50)
+except KeyboardInterrupt:
+    buzzer.off()
+    print("\n".join(log))
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Reed switches and magnets; comparator modules.</li>
+  <li>Encapsulating hardware in a class; edge detection inside an object.</li>
+  <li><code>time.localtime()</code>, string formatting with leading zeros, <code>any()</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: entry delay and a secret disarm</h2>
+<p>Real alarms give the owner time to switch them off. Turn the program into a <b>state machine</b> with four states:</p>
+<ol>
+  <li><b>ARMED</b> — opening the <i>cupboard</i> starts the entry delay.</li>
+  <li><b>ENTRY</b> — 10 seconds of slow chirping. The owner disarms by holding the magnet to the secret <i>drawer</i> sensor for 2 seconds. If time runs out → ALARM.</li>
+  <li><b>ALARM</b> — continuous siren pattern for 20 s (non-blocking!), then back to ARMED if all doors are closed.</li>
+  <li><b>DISARMED</b> — silent. Holding the magnet to the drawer sensor for 2 s again re-arms (with three chirps).</li>
+</ol>
+<p>For this exercise the drawer sensor is a "key", so treat <i>magnet present</i> (not "open") as the interesting state. Log every state change.</p>
+<details class="hint"><summary>Hint</summary>
+<p>Keep <code>state</code> and <code>state_since = ticks_ms()</code>. For the 2-second hold, remember when the magnet first appeared (<code>key_since</code>) and reset it to <code>None</code> when it disappears. Make the siren non-blocking by deciding the buzzer's on/off from the elapsed time, e.g. <code>(elapsed // 200) % 2</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>Every pass through the loop asks "what state am I in, and has the condition to leave it happened?". Sound patterns are computed from the time since entering the state, so nothing ever blocks.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+buzzer = Pin(15, Pin.OUT)
+led = Pin("LED", Pin.OUT)
+cupboard = Pin(16, Pin.IN)
+key = Pin(17, Pin.IN)
+
+print("Magnet on the cupboard only, drawer sensor free...")
+time.sleep(3)
+CUPBOARD_CLOSED = cupboard.value()
+KEY_ABSENT = key.value()
+
+def ms_since(t):
+    return time.ticks_diff(time.ticks_ms(), t)
+
+def record(event):
+    h, mi, s = time.localtime()[3:6]
+    print("{:02d}:{:02d}:{:02d} {}".format(h, mi, s, event))
+
+def chirp(n):
+    for _ in range(n):
+        buzzer.on(); time.sleep_ms(40); buzzer.off(); time.sleep_ms(80)
+
+state, state_since = "ARMED", time.ticks_ms()
+key_since = None
+
+def go(new):
+    global state, state_since
+    record(state + " -> " + new)
+    state, state_since = new, time.ticks_ms()
+
+chirp(3)
+record("ARMED")
+while True:
+    door_open = cupboard.value() != CUPBOARD_CLOSED
+    if key.value() != KEY_ABSENT:                     # magnet on the secret sensor
+        key_since = key_since or time.ticks_ms()
+    else:
+        key_since = None
+    key_held = key_since is not None and ms_since(key_since) >= 2000
+    t = ms_since(state_since)
+
+    if state == "ARMED":
+        buzzer.off(); led.off()
+        if door_open:
+            go("ENTRY")
+    elif state == "ENTRY":
+        buzzer.value(t % 1000 < 50)                  # slow chirp
+        led.value(t % 1000 < 500)
+        if key_held:
+            buzzer.off(); go("DISARMED"); key_since = None
+        elif t > 10000:
+            go("ALARM")
+    elif state == "ALARM":
+        on = (t // 200) % 2
+        buzzer.value(on); led.value(on)
+        if key_held:
+            buzzer.off(); go("DISARMED"); key_since = None
+        elif t > 20000 and not door_open:
+            go("ARMED")
+    elif state == "DISARMED":
+        buzzer.off(); led.on()
+        if key_held:
+            chirp(3); go("ARMED"); key_since = None
+    time.sleep_ms(20)
+</script>
+<p><code>key_since = key_since or time.ticks_ms()</code> keeps the old value if there is one, otherwise sets the current time — a compact Python idiom. Careful: it would misbehave if <code>ticks_ms()</code> were exactly 0, which is extremely rare.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

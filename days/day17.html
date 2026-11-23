@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 17 · Advent Candle Watch</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="17">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 17</p>
+  <h1><span class="daynum">17</span>Advent Candle Watch</h1>
+  <p class="lede">The flame sensor sees the infrared glow of a fire. Today you'll build a watchdog for the Advent candle: it notices when the candle is lit, times how long it burns, and reminds you before it's left alone too long.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-026 Flame sensor (red board)</li>
+  <li>KY-012 Active buzzer</li>
+  <li>A tea-light candle, matches — and an adult</li>
+  <li>8 jumper wires</li>
+</ul>
+<div class="warn"><p><b>Fire safety:</b> an adult lights and watches the candle. Keep it on a plate, at least 20 cm from the breadboard and wires, and never leave it unattended. This project is a <i>reminder</i>, not a safety device — never rely on it.</p></div>
+
+<h2><span class="em">🔍</span>How it sees fire</h2>
+<p>The black LED-like part is an <b>infrared phototransistor</b>, most sensitive to 760–1100 nm — the wavelengths flames emit strongly. <b>AO</b> gives an analog value (how much IR); <b>DO</b> flips when it passes the potentiometer's threshold. Sunlight and halogen lamps contain lots of IR too, so expect false alarms near windows.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "flame", "name": "KY-026 Flame sensor", "col": 26, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "pot" },
+    { "id": "bz", "name": "KY-012 Active buzzer", "col": 38, "pins": ["S", "+", "-"], "icon": "buzzer" }
+  ],
+  "wires": [
+    { "from": "GP26", "to": "flame.AO", "color": "white", "note": "ADC0" },
+    { "from": "flame.G", "to": "-" },
+    { "from": "flame.+", "to": "+" },
+    { "from": "GP16", "to": "flame.DO", "color": "blue" },
+    { "from": "GP15", "to": "bz.S", "color": "yellow" },
+    { "from": "bz.+", "to": "+" },
+    { "from": "bz.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Look at the raw signal</h3>
+<p>Run this with the plotter open. After a few seconds, have the adult light the candle about 20–30 cm in front of the sensor.</p>
+<script type="text/x-python">
+from machine import Pin, ADC
+import time
+
+ao = ADC(26)
+do = Pin(16, Pin.IN)
+
+for _ in range(300):
+    print(ao.read_u16())
+    time.sleep_ms(50)
+</script>
+<p>On most KY-026 boards the value <b>drops</b> when there's a flame (more IR → the phototransistor conducts more). Notice the wobble — that's the flame flickering!</p>
+
+<h3>2. Baseline and difference</h3>
+<p>Every room has different background IR. Instead of fixed numbers, we measure a <b>baseline</b> without flame at start-up and look at the <b>change</b>. <code>abs()</code> makes it work whichever direction your board goes.</p>
+<script type="text/x-python">
+def average(n=32):
+    return sum(ao.read_u16() for _ in range(n)) / n
+
+print("Measuring background - no flame please")
+baseline = average(256)
+print("baseline:", round(baseline))
+
+def flame_strength():
+    return abs(average() - baseline)
+
+THRESHOLD = 3000          # tune: a bit below what you see with the candle lit
+print("strength now:", round(flame_strength()))
+</script>
+
+<h3>3. Lit or not — with hysteresis</h3>
+<p>A flickering flame produces a wobbly signal, so we use two thresholds (Day 12's hysteresis again) to avoid "lit / not lit / lit" chatter.</p>
+<script type="text/x-python">
+lit = False
+
+def update_lit():
+    global lit
+    s = flame_strength()
+    if s > THRESHOLD:
+        lit = True
+    elif s < THRESHOLD * 0.6:
+        lit = False
+    return lit
+</script>
+
+<h3>4. Burn timer with reminders</h3>
+<p>We remember when the candle was lit. After <code>REMIND_AFTER</code> seconds it beeps, and again every 30 s, until the candle is blown out. For testing it's 60 s; for real use set it to 30 minutes.</p>
+<script type="text/x-python">
+buzzer = Pin(15, Pin.OUT)
+REMIND_AFTER = 60          # seconds (try 30 * 60 for real use)
+lit_since = None
+last_reminder = None
+total_burn = 0
+
+def beep(n):
+    for _ in range(n):
+        buzzer.on(); time.sleep_ms(100); buzzer.off(); time.sleep_ms(100)
+
+while True:
+    now = time.ticks_ms()
+    if update_lit():
+        if lit_since is None:
+            lit_since = now
+            print("🕯️ Candle lit")
+        burning = time.ticks_diff(now, lit_since) // 1000
+        if burning >= REMIND_AFTER and (last_reminder is None or time.ticks_diff(now, last_reminder) > 30000):
+            print("Reminder: burning for {} s".format(burning))
+            beep(3)
+            last_reminder = now
+    elif lit_since is not None:
+        burned = time.ticks_diff(now, lit_since) // 1000
+        total_burn += burned
+        print("Candle out after {} s (total today {} s)".format(burned, total_burn))
+        lit_since = last_reminder = None
+    time.sleep_ms(100)
+</script>
+
+<script type="text/x-python" data-title="Full program — day17 main.py">
+from machine import Pin, ADC
+import time
+
+THRESHOLD = 3000
+REMIND_AFTER = 60
+ao = ADC(26)
+buzzer = Pin(15, Pin.OUT)
+
+def average(n=32):
+    return sum(ao.read_u16() for _ in range(n)) / n
+
+def beep(n):
+    for _ in range(n):
+        buzzer.on(); time.sleep_ms(100); buzzer.off(); time.sleep_ms(100)
+
+print("Measuring background - no flame please")
+baseline = average(256)
+lit = False
+lit_since = last_reminder = None
+total_burn = 0
+
+try:
+    while True:
+        s = abs(average() - baseline)
+        if s > THRESHOLD:
+            lit = True
+        elif s < THRESHOLD * 0.6:
+            lit = False
+        now = time.ticks_ms()
+        if lit:
+            if lit_since is None:
+                lit_since = now
+                print("Candle lit")
+            burning = time.ticks_diff(now, lit_since) // 1000
+            if burning >= REMIND_AFTER and (last_reminder is None or time.ticks_diff(now, last_reminder) > 30000):
+                print("Reminder: burning for {} s".format(burning))
+                beep(3)
+                last_reminder = now
+        elif lit_since is not None:
+            burned = time.ticks_diff(now, lit_since) // 1000
+            total_burn += burned
+            print("Candle out after {} s (total {} s)".format(burned, total_burn))
+            lit_since = last_reminder = None
+        time.sleep_ms(100)
+except KeyboardInterrupt:
+    buzzer.off()
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>IR flame sensing; why background calibration matters.</li>
+  <li>Measuring durations of states (lit → out) and repeating reminders.</li>
+  <li>Hysteresis applied to noisy analog signals.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: real flame or just a lamp?</h2>
+<p>Point a torch or an incandescent bulb at the sensor — it probably thinks that's a candle too. But real flames <b>flicker</b> (typically 5–15 times per second), while lamps glow steadily. Teach the Pico the difference:</p>
+<ol>
+  <li>Sample AO 200 times per second for 2 seconds (400 samples).</li>
+  <li>Calculate the <b>mean</b> and the <b>standard deviation</b> (how much the values wobble around the mean).</li>
+  <li>Also count how often the signal <b>crosses the mean</b> — a measure of how fast it wobbles.</li>
+  <li>Decide: strong signal + high wobble = "flame 🔥", strong but steady = "lamp 💡", weak = "nothing". Print the numbers so you can tune your thresholds.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Standard deviation: <code>sqrt(sum((x - mean)**2 for x in samples) / len(samples))</code>. A mean-crossing happens when one sample is above the mean and the next one below (or vice versa). Use <code>time.sleep_us(5000)</code> between samples.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>This is a tiny bit of <b>signal processing</b>: we reduce 400 numbers to three features (strength, wobble, crossings) and classify with simple rules. The thresholds below are starting points — print the features for each light source and adjust.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import ADC
+import time, math
+
+ao = ADC(26)
+RATE_HZ, SECONDS = 200, 2
+
+def capture():
+    samples = []
+    period = 1_000_000 // RATE_HZ
+    next_t = time.ticks_us()
+    for _ in range(RATE_HZ * SECONDS):
+        samples.append(ao.read_u16())
+        next_t = time.ticks_add(next_t, period)
+        while time.ticks_diff(next_t, time.ticks_us()) > 0:
+            pass
+    return samples
+
+def features(samples):
+    n = len(samples)
+    mean = sum(samples) / n
+    std = math.sqrt(sum((x - mean) ** 2 for x in samples) / n)
+    crossings = sum(1 for a, b in zip(samples, samples[1:]) if (a - mean) * (b - mean) < 0)
+    return mean, std, crossings
+
+print("Measuring background...")
+base_mean, _, _ = features(capture())
+
+while True:
+    mean, std, cross = features(capture())
+    strength = abs(mean - base_mean)
+    if strength < 1500:
+        verdict = "nothing"
+    elif std > 400 and cross > 10:
+        verdict = "FLAME"
+    else:
+        verdict = "lamp / steady IR"
+    print("strength {:6.0f}  wobble {:5.0f}  crossings {:3d}  -> {}".format(strength, std, cross, verdict))
+</script>
+<p>Mains-powered lamps can flicker at 100 Hz (50 Hz mains) — faster than our sampling can follow properly. That's <b>aliasing</b>, a classic signal-processing trap. Try sampling at 1000 Hz and compare!</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

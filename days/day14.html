@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 14 · Magnet Detective</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="14">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 14</p>
+  <h1><span class="daynum">14</span>Magnet Detective</h1>
+  <p class="lede">Reed switches only say yes or no. Hall-effect sensors can measure a magnetic field's <i>strength</i> and even tell the north pole from the south. Three of them today — and a magnetometer you can read in the shell.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-003 Digital Hall sensor</li>
+  <li>KY-024 Linear Hall sensor (red board)</li>
+  <li>KY-035 Analog Hall sensor</li>
+  <li>A magnet</li>
+  <li>11 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>The Hall effect</h2>
+<p>When current flows through a thin semiconductor plate and a magnetic field passes through it, the electrons get pushed to one side, creating a tiny voltage across the plate. That's the <b>Hall effect</b> (Edwin Hall, 1879). The sensor chip amplifies it.</p>
+<div class="table-scroll"><table>
+  <tr><th>Module</th><th>Chip</th><th>Output</th></tr>
+  <tr><td>KY-003</td><td>A3144 (switch)</td><td>Digital: snaps to 0 when a (south) pole comes close.</td></tr>
+  <tr><td>KY-035</td><td>49E (linear)</td><td>Analog: half of the supply voltage with no field, higher for one pole, lower for the other.</td></tr>
+  <tr><td>KY-024</td><td>49E + comparator</td><td>Both: AO like the KY-035, DO with an adjustable threshold.</td></tr>
+</table></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "dig", "name": "KY-003 Digital Hall", "col": 24, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#263238" },
+    { "id": "lin", "name": "KY-024 Linear Hall", "col": 31, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "pot" },
+    { "id": "ana", "name": "KY-035 Analog Hall", "col": 40, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#263238" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "dig.S", "color": "blue" },
+    { "from": "dig.+", "to": "+" },
+    { "from": "dig.-", "to": "-" },
+    { "from": "GP26", "to": "lin.AO", "color": "white", "note": "ADC0" },
+    { "from": "lin.G", "to": "-" },
+    { "from": "lin.+", "to": "+" },
+    { "from": "GP17", "to": "lin.DO", "color": "purple" },
+    { "from": "GP27", "to": "ana.S", "color": "pink", "note": "ADC1" },
+    { "from": "ana.+", "to": "+" },
+    { "from": "ana.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. The digital sensor</h3>
+<script type="text/x-python">
+from machine import Pin, ADC
+import time
+
+dig = Pin(16, Pin.IN)
+led = Pin("LED", Pin.OUT)
+
+for _ in range(100):
+    near = dig.value() == 0        # the A3144 pulls its output LOW
+    led.value(near)
+    time.sleep_ms(50)
+</script>
+<p>Bring each side of your magnet to the sensor's flat face. The A3144 only reacts to <b>one</b> pole — that's how you can find which side of a magnet is south!</p>
+
+<h3>2. Analog field strength</h3>
+<p>With no magnet nearby, a linear Hall sensor outputs about half the supply voltage. Bringing a pole closer pushes it up or down. Run this with the plotter open and wave the magnet around both analog sensors.</p>
+<script type="text/x-python">
+lin = ADC(26)      # KY-024 AO
+ana = ADC(27)      # KY-035 S
+
+for _ in range(200):
+    print(lin.read_u16(), ana.read_u16())
+    time.sleep_ms(30)
+</script>
+
+<h3>3. Calibrate the zero point</h3>
+<p>"Half the supply" is never exactly 32768. We measure the true zero-field value at start-up (magnet far away) and subtract it. Positive and negative numbers now tell the two poles apart.</p>
+<script type="text/x-python">
+def average(adc, n=64):
+    return sum(adc.read_u16() for _ in range(n)) / n
+
+print("Keep the magnet away...")
+time.sleep(1)
+zero_lin = average(lin)
+zero_ana = average(ana)
+print("zero points:", round(zero_lin), round(zero_ana))
+</script>
+
+<h3>4. Convert to millitesla</h3>
+<p>The 49E chip's sensitivity is about 1.4 mV per gauss at 5 V and scales with supply voltage, so at 3.3 V it's roughly 0.92 mV/G = 9.2 mV per millitesla (mT). That's approximate — but good enough to compare magnets. (Earth's field is about 0.05 mT; a fridge magnet up close is 5–10 mT.)</p>
+<script type="text/x-python">
+MV_PER_MT = 9.2
+
+def millitesla(adc, zero):
+    volts = (average(adc, 16) - zero) * 3.3 / 65535
+    return volts * 1000 / MV_PER_MT
+
+print("{:+.1f} mT".format(millitesla(ana, zero_ana)))
+</script>
+
+<h3>5. A shell magnetometer</h3>
+<p>A text bar graph: the bar grows to the right for one pole and to the left for the other. <code>"#" * n</code> repeats a character <i>n</i> times.</p>
+<script type="text/x-python">
+def bar(value, scale=2, width=20):
+    n = min(width, int(abs(value) * scale))
+    if value >= 0:
+        return " " * width + "|" + "#" * n + " " * (width - n)
+    return " " * (width - n) + "#" * n + "|" + " " * width
+
+while True:
+    b = millitesla(ana, zero_ana)
+    pole = "N?" if b > 0.5 else "S?" if b < -0.5 else "  "
+    print("{:+6.1f} mT {} {}  digital:{} comparator:{}".format(
+        b, bar(b), pole, dig.value(), Pin(17, Pin.IN).value()))
+    time.sleep_ms(100)
+</script>
+<p>Which sign means north depends on which side of the sensor faces the magnet. Use the KY-003 from step 1 (it reacts to south) to find out, then fix the labels in the code.</p>
+
+<script type="text/x-python" data-title="Full program — day14 main.py">
+from machine import Pin, ADC
+import time
+
+MV_PER_MT = 9.2
+dig = Pin(16, Pin.IN)
+cmp = Pin(17, Pin.IN)
+lin, ana = ADC(26), ADC(27)
+led = Pin("LED", Pin.OUT)
+
+def average(adc, n=64):
+    return sum(adc.read_u16() for _ in range(n)) / n
+
+def millitesla(adc, zero):
+    return (average(adc, 16) - zero) * 3.3 / 65535 * 1000 / MV_PER_MT
+
+def bar(value, scale=2, width=20):
+    n = min(width, int(abs(value) * scale))
+    if value >= 0:
+        return " " * width + "|" + "#" * n + " " * (width - n)
+    return " " * (width - n) + "#" * n + "|" + " " * width
+
+print("Calibrating - keep magnets away")
+time.sleep(1)
+zero_lin, zero_ana = average(lin), average(ana)
+
+while True:
+    b1, b2 = millitesla(lin, zero_lin), millitesla(ana, zero_ana)
+    led.value(dig.value() == 0)
+    print("KY-024 {:+6.1f} mT  KY-035 {:+6.1f} mT {}".format(b1, b2, bar(b2)))
+    time.sleep_ms(100)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>The Hall effect; switching vs linear Hall sensors; magnetic poles.</li>
+  <li>Zero-point calibration and unit conversion from datasheet sensitivity.</li>
+  <li>Building text visualisations with string repetition.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: rev counter</h2>
+<p>Hall sensors count rotations in bike computers, car engines and wind gauges. Tape the magnet to something that spins — a bike wheel, a fidget spinner, a pencil you twirl, a desk fan (switched off and turned by hand!) — and measure its speed.</p>
+<ol>
+  <li>Use an <b>interrupt</b> on the KY-003 (falling edge) to record the time of each pass in <b>microseconds</b> (<code>time.ticks_us()</code>).</li>
+  <li>Calculate RPM (revolutions per minute) from the time between the last two passes. Print it twice a second.</li>
+  <li>If no pass has happened for 2 seconds, report 0 RPM.</li>
+  <li>Bonus: if you know the wheel circumference, print the speed in km/h.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>In the handler, store <code>period = ticks_diff(now, last)</code> and <code>last = now</code>. RPM = 60 000 000 / period (µs). Ignore periods shorter than ~5 ms (bounce or a too-strong magnet).</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>The interrupt handler measures the period precisely; the main loop only displays it. Using microseconds gives good resolution even for fast rotations.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time
+
+hall = Pin(16, Pin.IN)
+CIRCUMFERENCE_M = 2.1          # e.g. a 28" bike wheel
+
+last_pass = time.ticks_us()
+period_us = 0
+passes = 0
+
+def on_pass(pin):
+    global last_pass, period_us, passes
+    now = time.ticks_us()
+    p = time.ticks_diff(now, last_pass)
+    if p > 5000:               # ignore bounces shorter than 5 ms
+        period_us = p
+        last_pass = now
+        passes += 1
+
+hall.irq(trigger=Pin.IRQ_FALLING, handler=on_pass)
+
+while True:
+    idle = time.ticks_diff(time.ticks_us(), last_pass)
+    if idle > 2_000_000 or period_us == 0:
+        rpm = 0
+    else:
+        rpm = 60_000_000 / period_us
+    kmh = rpm * CIRCUMFERENCE_M * 60 / 1000
+    print("passes {:5d}   {:7.1f} RPM   {:5.1f} km/h".format(passes, rpm, kmh))
+    time.sleep(0.5)
+</script>
+<p>With one magnet you get one pulse per revolution. Two magnets on opposite sides double the resolution — remember to divide by two!</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

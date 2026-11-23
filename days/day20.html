@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 20 · Joystick Colour Wheel</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="20">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 20</p>
+  <h1><span class="daynum">20</span>Joystick Colour Wheel</h1>
+  <p class="lede">A thumb joystick is two potentiometers and a button. Today you'll read both axes, turn the stick's angle into a colour on the RGB LED with a bit of trigonometry — and build a game of Simon Says in the exercise.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-023 Joystick module</li>
+  <li>KY-016 RGB LED</li>
+  <li>10 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Inside the joystick</h2>
+<p>Moving the stick left/right turns one potentiometer (<b>VRx</b>), up/down turns another (<b>VRy</b>). Each pot is a voltage divider, so the output goes from 0 V at one end to the supply voltage at the other, with about half in the middle. Pressing down on the stick clicks a button (<b>SW</b>) that connects to ground.</p>
+<div class="warn"><p>The pin is labelled <b>+5V</b>, but connect it to the <b>3.3 V</b> rail! With 5 V the outputs would exceed what the Pico's analog pins can take.</p></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "joy", "name": "KY-023 Joystick", "col": 24, "pins": ["GND", "+5V", "VRx", "VRy", "SW"], "icon": "joystick" },
+    { "id": "rgb", "name": "KY-016 RGB LED", "col": 36, "pins": ["R", "G", "B", "-"], "icon": "rgb" }
+  ],
+  "wires": [
+    { "from": "joy.GND", "to": "-" },
+    { "from": "joy.+5V", "to": "+", "note": "3.3 V - not 5 V!" },
+    { "from": "GP26", "to": "joy.VRx", "color": "white", "note": "ADC0" },
+    { "from": "GP27", "to": "joy.VRy", "color": "pink", "note": "ADC1" },
+    { "from": "GP16", "to": "joy.SW", "color": "blue", "note": "button" },
+    { "from": "GP2", "to": "rgb.R", "color": "orange" },
+    { "from": "GP3", "to": "rgb.G", "color": "green" },
+    { "from": "GP4", "to": "rgb.B", "color": "blue" },
+    { "from": "rgb.-", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Read the stick</h3>
+<p>The button has no resistor on the module, so we switch on the Pico's internal <b>pull-up</b> with <code>Pin.PULL_UP</code>: the pin reads 1 normally and 0 when pressed.</p>
+<script type="text/x-python">
+from machine import Pin, ADC, PWM
+import time, math
+
+vrx, vry = ADC(26), ADC(27)
+sw = Pin(16, Pin.IN, Pin.PULL_UP)
+
+for _ in range(100):
+    print(vrx.read_u16(), vry.read_u16(), sw.value())
+    time.sleep_ms(50)
+</script>
+
+<h3>2. Centre and scale to −1…+1</h3>
+<p>The resting position is never exactly 32768, so we measure it at start-up (hands off!). Then we scale each axis to −1 … +1 and add a small <b>dead zone</b> so the colour doesn't wander when the stick is released.</p>
+<script type="text/x-python">
+def avg(adc, n=32):
+    return sum(adc.read_u16() for _ in range(n)) / n
+
+cx, cy = avg(vrx), avg(vry)
+DEAD = 0.08
+
+def axis(adc, centre):
+    v = adc.read_u16() - centre
+    v = v / (65535 - centre) if v > 0 else v / centre      # -1 .. +1
+    return 0.0 if abs(v) < DEAD else max(-1.0, min(1.0, v))
+
+def stick():
+    return axis(vrx, cx), axis(vry, cy)
+
+print(stick())
+</script>
+
+<h3>3. Angle and distance</h3>
+<p>Think of the stick position as a point (x, y). Its <b>distance</b> from the centre is <code>√(x² + y²)</code> and its <b>angle</b> is <code>atan2(y, x)</code> — a function that gives the direction of a point in radians, which we convert to degrees 0–360.</p>
+<script type="text/x-python">
+def polar(x, y):
+    dist = min(1.0, math.sqrt(x * x + y * y))
+    angle = math.degrees(math.atan2(y, x)) % 360
+    return angle, dist
+
+for _ in range(50):
+    a, d = polar(*stick())
+    print("angle {:5.1f}°  distance {:.2f}".format(a, d))
+    time.sleep_ms(100)
+</script>
+
+<h3>4. Colour wheel</h3>
+<p>Angle → hue, distance → saturation (from white in the middle to full colour at the edge). We reuse <code>hsv_to_rgb()</code> from Day 4. The button switches between "colour wheel" and "freeze" mode, so you can pick a colour and keep it.</p>
+<script type="text/x-python">
+leds = [PWM(Pin(p)) for p in (2, 3, 4)]
+for l in leds:
+    l.freq(1000)
+
+def set_rgb(r, g, b):
+    for l, v in zip(leds, (r, g, b)):
+        l.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+def hsv_to_rgb(h, s=1.0, v=1.0):
+    h = (h % 360) / 60
+    i = int(h); f = h - i
+    p, q, t = v * (1 - s), v * (1 - s * f), v * (1 - s * (1 - f))
+    r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
+    return int(r * 255), int(g * 255), int(b * 255)
+
+frozen = False
+while True:
+    if sw.value() == 0:                    # pressed
+        frozen = not frozen
+        print("frozen" if frozen else "live")
+        while sw.value() == 0:
+            time.sleep_ms(10)              # wait for release
+    if not frozen:
+        a, d = polar(*stick())
+        set_rgb(*hsv_to_rgb(a, d, 0.8))
+    time.sleep_ms(20)
+</script>
+
+<script type="text/x-python" data-title="Full program — day20 main.py">
+from machine import Pin, ADC, PWM
+import time, math
+
+vrx, vry = ADC(26), ADC(27)
+sw = Pin(16, Pin.IN, Pin.PULL_UP)
+leds = [PWM(Pin(p)) for p in (2, 3, 4)]
+for l in leds:
+    l.freq(1000)
+DEAD = 0.08
+
+def avg(adc, n=32):
+    return sum(adc.read_u16() for _ in range(n)) / n
+
+cx, cy = avg(vrx), avg(vry)
+
+def axis(adc, centre):
+    v = adc.read_u16() - centre
+    v = v / (65535 - centre) if v > 0 else v / centre
+    return 0.0 if abs(v) < DEAD else max(-1.0, min(1.0, v))
+
+def set_rgb(r, g, b):
+    for l, v in zip(leds, (r, g, b)):
+        l.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+def hsv_to_rgb(h, s=1.0, v=1.0):
+    h = (h % 360) / 60
+    i = int(h); f = h - i
+    p, q, t = v * (1 - s), v * (1 - s * f), v * (1 - s * (1 - f))
+    r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
+    return int(r * 255), int(g * 255), int(b * 255)
+
+frozen = False
+try:
+    while True:
+        if sw.value() == 0:
+            frozen = not frozen
+            while sw.value() == 0:
+                time.sleep_ms(10)
+        if not frozen:
+            x, y = axis(vrx, cx), axis(vry, cy)
+            dist = min(1.0, math.sqrt(x * x + y * y))
+            angle = math.degrees(math.atan2(y, x)) % 360
+            set_rgb(*hsv_to_rgb(angle, dist, 0.8))
+        time.sleep_ms(20)
+except KeyboardInterrupt:
+    set_rgb(0, 0, 0)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Joysticks as two voltage dividers; internal pull-up resistors.</li>
+  <li>Calibrating a centre point, scaling, dead zones.</li>
+  <li>Cartesian → polar coordinates with <code>sqrt</code> and <code>atan2</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: Simon Says</h2>
+<ol>
+  <li>Four directions, four colours: up = red, right = green, down = blue, left = yellow.</li>
+  <li>The Pico shows a sequence of colours (start with 1). The player repeats it by pushing the stick in the matching directions and letting it spring back to the centre after each move.</li>
+  <li>Correct → add one more random colour and play the longer sequence. Wrong → flash white three times, print the score (sequence length reached) and start over.</li>
+  <li>A button press at any time restarts the game.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Write <code>read_direction()</code> that waits until the stick is pushed far (distance &gt; 0.7), decides the direction by which axis is bigger and its sign, then waits until the stick is back in the centre before returning. Your joystick might be mounted rotated: print the directions first and swap signs if needed.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<p>A move only counts once the stick returns to the centre — otherwise holding it would count as many moves. If "up" comes out as "down" on your board, flip the sign in <code>direction_of()</code>.</p>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, ADC, PWM
+import time, random
+
+vrx, vry = ADC(26), ADC(27)
+sw = Pin(16, Pin.IN, Pin.PULL_UP)
+leds = [PWM(Pin(p)) for p in (2, 3, 4)]
+for l in leds:
+    l.freq(1000)
+
+COLOURS = {"up": (255, 0, 0), "right": (0, 255, 0), "down": (0, 0, 255), "left": (255, 160, 0)}
+DIRS = list(COLOURS)
+
+def set_rgb(r, g, b):
+    for l, v in zip(leds, (r, g, b)):
+        l.duty_u16(int((v / 255) ** 2.2 * 65535))
+
+def avg(adc, n=32):
+    return sum(adc.read_u16() for _ in range(n)) / n
+
+cx, cy = avg(vrx), avg(vry)
+
+def stick():
+    x = (vrx.read_u16() - cx) / 32768
+    y = (vry.read_u16() - cy) / 32768
+    return x, y
+
+def direction_of(x, y):
+    if abs(x) > abs(y):
+        return "right" if x > 0 else "left"
+    return "up" if y < 0 else "down"
+
+class Restart(Exception):
+    pass
+
+def read_direction():
+    while True:                                  # wait for a push
+        if sw.value() == 0:
+            raise Restart
+        x, y = stick()
+        if x * x + y * y > 0.5:
+            d = direction_of(x, y)
+            break
+        time.sleep_ms(10)
+    set_rgb(*COLOURS[d])
+    while True:                                  # wait for return to centre
+        x, y = stick()
+        if x * x + y * y < 0.05:
+            break
+        time.sleep_ms(10)
+    set_rgb(0, 0, 0)
+    return d
+
+def show_sequence(seq):
+    time.sleep(0.5)
+    for d in seq:
+        set_rgb(*COLOURS[d]); time.sleep(0.5)
+        set_rgb(0, 0, 0); time.sleep(0.2)
+
+def fail():
+    for _ in range(3):
+        set_rgb(255, 255, 255); time.sleep(0.2)
+        set_rgb(0, 0, 0); time.sleep(0.2)
+
+while True:
+    seq = [random.choice(DIRS)]
+    print("New game!")
+    try:
+        while True:
+            show_sequence(seq)
+            for expected in seq:
+                if read_direction() != expected:
+                    fail()
+                    print("Game over - score:", len(seq) - 1)
+                    raise Restart
+            seq.append(random.choice(DIRS))
+    except Restart:
+        while sw.value() == 0:
+            time.sleep_ms(10)
+        time.sleep(1)
+</script>
+<p>Raising a custom exception (<code>Restart</code>) is a neat way to jump out of several nested loops at once.</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

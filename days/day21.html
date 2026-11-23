@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 21 · Safe Cracker</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="21">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 21</p>
+  <h1><span class="daynum">21</span>Safe Cracker</h1>
+  <p class="lede">A rotary encoder is a knob that turns forever and clicks as it goes. You'll decode its secret two-wire language, add satisfying tick sounds — and build a combination safe with the traffic light in the exercise.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-040 Rotary encoder</li>
+  <li>KY-006 Passive buzzer</li>
+  <li>LED Traffic Light module</li>
+  <li>12 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>How a rotary encoder talks</h2>
+<p>Inside are two switches, <b>CLK</b> (also called A) and <b>DT</b> (B), that open and close as you turn — but slightly out of step with each other. Turning clockwise, A changes first; anticlockwise, B changes first. Reading both tells you the direction. The pattern repeats <code>00 → 01 → 11 → 10 → 00</code> (one way) or backwards (the other way). This sequence is called <b>Gray code</b>: only one bit changes at a time. Pressing the knob clicks a third switch, <b>SW</b>.</p>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "enc", "name": "KY-040 Rotary encoder", "col": 24, "pins": ["CLK", "DT", "SW", "+", "GND"], "icon": "encoder" },
+    { "id": "bz", "name": "KY-006 Passive buzzer", "col": 34, "pins": ["S", "mid", "-"], "icon": "buzzer" },
+    { "id": "tl", "name": "Traffic Light module", "col": 42, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" }
+  ],
+  "wires": [
+    { "from": "GP16", "to": "enc.CLK", "color": "blue" },
+    { "from": "GP17", "to": "enc.DT", "color": "purple" },
+    { "from": "GP18", "to": "enc.SW", "color": "white" },
+    { "from": "enc.+", "to": "+" },
+    { "from": "enc.GND", "to": "-" },
+    { "from": "GP12", "to": "bz.S", "color": "pink" },
+    { "from": "bz.-", "to": "-" },
+    { "from": "GP15", "to": "tl.R", "color": "orange" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow" },
+    { "from": "GP13", "to": "tl.G", "color": "green" },
+    { "from": "tl.GND", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Watch the two signals</h3>
+<p>The KY-040 has pull-up resistors for CLK and DT on the board; the SW button often doesn't, so we add the Pico's internal pull-up.</p>
+<script type="text/x-python">
+from machine import Pin, PWM
+import time
+
+clk = Pin(16, Pin.IN)
+dt = Pin(17, Pin.IN)
+sw = Pin(18, Pin.IN, Pin.PULL_UP)
+
+last = None
+for _ in range(2000):
+    state = (clk.value(), dt.value())
+    if state != last:
+        print(state)
+        last = state
+    time.sleep_ms(1)
+</script>
+<p>Turn slowly one click clockwise, then one anticlockwise. You'll see the Gray code walk forwards, then backwards. Most KY-040s go through all four states per click and rest at <code>(1, 1)</code>.</p>
+
+<h3>2. A transition table</h3>
+<p>Combine the old and new state into a 4-bit number <code>old·4 + new</code> (0…15). For each of the 16 possible transitions, the table says: +1 (one step clockwise), −1 (anticlockwise) or 0 (no change, or an impossible jump caused by bouncing — which we simply ignore). This makes the decoder very robust.</p>
+<script type="text/x-python">
+#        new: 00  01  10  11      old:
+TRANS = [     0, -1, +1,  0,   #  00
+             +1,  0,  0, -1,   #  01
+             -1,  0,  0, +1,   #  10
+              0, +1, -1,  0 ]  #  11
+
+raw = 0
+state = (clk.value() << 1) | dt.value()
+
+def on_change(pin):
+    global raw, state
+    new = (clk.value() << 1) | dt.value()
+    raw += TRANS[(state << 2) | new]
+    state = new
+
+clk.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_change)
+dt.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_change)
+</script>
+<p><code>&lt;&lt;</code> shifts bits to the left (<code>x &lt;&lt; 1</code> = <code>x · 2</code>) and <code>|</code> combines bits — a compact way to pack two pins into one number.</p>
+
+<h3>3. Steps per click</h3>
+<p>With four transitions per detent, the knob position is <code>raw // 4</code>. If one click moves your count by 2, set <code>STEPS = 2</code>; if it counts backwards, swap the CLK and DT pin numbers.</p>
+<script type="text/x-python">
+STEPS = 4
+
+def position():
+    return raw // STEPS
+
+last_pos = position()
+for _ in range(300):
+    p = position()
+    if p != last_pos:
+        print("position:", p)
+        last_pos = p
+    time.sleep_ms(20)
+</script>
+
+<h3>4. Tick sounds</h3>
+<p>A short, high click on the passive buzzer for each step, and a lower tone for the button — just like a safe's dial.</p>
+<script type="text/x-python">
+bz = PWM(Pin(12))
+bz.duty_u16(0)
+
+def tick(freq=3000, ms=4):
+    bz.freq(freq); bz.duty_u16(32768)
+    time.sleep_ms(ms)
+    bz.duty_u16(0)
+</script>
+
+<h3>5. A dial from 0 to 19</h3>
+<p>Like a real safe, the dial wraps around: after 19 comes 0. The modulo operator <code>%</code> does that for us, even for negative numbers.</p>
+<script type="text/x-python">
+DIAL = 20
+last_pos = position()
+while True:
+    p = position()
+    if p != last_pos:
+        tick()
+        last_pos = p
+        print("dial:", p % DIAL)
+    if sw.value() == 0:
+        tick(800, 60)
+        print("click at", position() % DIAL)
+        while sw.value() == 0:
+            time.sleep_ms(10)
+    time.sleep_ms(5)
+</script>
+
+<script type="text/x-python" data-title="Full program — day21 main.py">
+from machine import Pin, PWM
+import time
+
+clk, dt = Pin(16, Pin.IN), Pin(17, Pin.IN)
+sw = Pin(18, Pin.IN, Pin.PULL_UP)
+bz = PWM(Pin(12)); bz.duty_u16(0)
+STEPS, DIAL = 4, 20
+TRANS = [0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0]
+
+raw = 0
+state = (clk.value() << 1) | dt.value()
+
+def on_change(pin):
+    global raw, state
+    new = (clk.value() << 1) | dt.value()
+    raw += TRANS[(state << 2) | new]
+    state = new
+
+clk.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_change)
+dt.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_change)
+
+def tick(freq=3000, ms=4):
+    bz.freq(freq); bz.duty_u16(32768); time.sleep_ms(ms); bz.duty_u16(0)
+
+last_pos = raw // STEPS
+while True:
+    p = raw // STEPS
+    if p != last_pos:
+        tick()
+        last_pos = p
+        print("dial:", p % DIAL)
+    if sw.value() == 0:
+        tick(800, 60)
+        print("click at", p % DIAL)
+        while sw.value() == 0:
+            time.sleep_ms(10)
+    time.sleep_ms(5)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Quadrature / Gray code, and why encoders use two out-of-phase signals.</li>
+  <li>Table-driven decoding that ignores bounce automatically.</li>
+  <li>Bit operations <code>&lt;&lt;</code> and <code>|</code>, integer division <code>//</code> and modulo <code>%</code>.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: crack the safe</h2>
+<ol>
+  <li>The safe has a 3-number combination on the 0–19 dial, e.g. <code>[7, 15, 3]</code>.</li>
+  <li>Turn to a number and press the knob to enter it. Each correct entry lights yellow briefly and plays a rising tone. A wrong entry plays a low buzz, flashes red and resets to the first number.</li>
+  <li>After all three are correct: green light and a little victory melody. Pressing again re-locks the safe (red).</li>
+  <li>Bonus "safecracker hint": when the dial is exactly on the next correct number, the tick sounds slightly different. Real safecrackers listen for that!</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Keep <code>entered</code> = how many numbers are correct so far (0–3). On each press compare <code>position() % DIAL</code> with <code>COMBO[entered]</code>.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, PWM
+import time
+
+clk, dt = Pin(16, Pin.IN), Pin(17, Pin.IN)
+sw = Pin(18, Pin.IN, Pin.PULL_UP)
+bz = PWM(Pin(12)); bz.duty_u16(0)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+STEPS, DIAL = 4, 20
+COMBO = [7, 15, 3]
+TRANS = [0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0]
+
+raw = 0
+state = (clk.value() << 1) | dt.value()
+
+def on_change(pin):
+    global raw, state
+    new = (clk.value() << 1) | dt.value()
+    raw += TRANS[(state << 2) | new]
+    state = new
+
+clk.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_change)
+dt.irq(trigger=Pin.IRQ_RISING | Pin.IRQ_FALLING, handler=on_change)
+
+def tone(freq, ms):
+    bz.freq(freq); bz.duty_u16(32768); time.sleep_ms(ms); bz.duty_u16(0)
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def wait_release():
+    while sw.value() == 0:
+        time.sleep_ms(10)
+
+entered = 0
+opened = False
+last_pos = raw // STEPS
+show(1, 0, 0)
+print("Safe locked. Combination has 3 numbers.")
+
+while True:
+    p = raw // STEPS
+    dial = p % DIAL
+    if p != last_pos:
+        last_pos = p
+        if not opened and entered < 3 and dial == COMBO[entered]:
+            tone(2200, 6)                       # the give-away tick
+        else:
+            tone(3000, 4)
+        print("dial:", dial)
+
+    if sw.value() == 0:
+        wait_release()
+        if opened:                              # re-lock
+            opened, entered = False, 0
+            show(1, 0, 0)
+            print("Locked again")
+        elif dial == COMBO[entered]:
+            entered += 1
+            tone(600 + entered * 300, 120)
+            show(1, 1, 0); time.sleep(0.3); show(1, 0, 0)
+            print("Number", entered, "correct")
+            if entered == 3:
+                opened = True
+                show(0, 0, 1)
+                for f in (523, 659, 784, 1047):
+                    tone(f, 120)
+                print("🎁 The safe is open!")
+        else:
+            entered = 0
+            tone(150, 400)
+            for _ in range(3):
+                show(0, 0, 0); time.sleep(0.1); show(1, 0, 0); time.sleep(0.1)
+            print("Wrong - start again")
+    time.sleep_ms(5)
+</script>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

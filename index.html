@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pico W Advent Calendar</title>
+<meta name="description" content="A 24-day coding advent calendar for the Raspberry Pi Pico W and the AZ-Delivery 35-in-1 sensor kit, in MicroPython.">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/site.js"></script>
+<style>
+  .doors { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px; margin: 1.2em 0; }
+  .door {
+    position: relative; aspect-ratio: 1 / 1.08; perspective: 700px; border: 0; padding: 0; background: none;
+    cursor: pointer; font: inherit; color: inherit; text-align: left;
+  }
+  .door .inside, .door .front {
+    position: absolute; inset: 0; border-radius: 12px; display: flex; flex-direction: column; padding: 10px;
+  }
+  .door .inside {
+    background: var(--paper); border: 2px solid var(--line); justify-content: space-between; text-decoration: none; color: var(--ink);
+  }
+  .door .inside b { font-size: .98rem; line-height: 1.2; }
+  .door .inside small { color: var(--muted); font-size: .74rem; line-height: 1.25; }
+  .door .front {
+    transform-origin: left center; transition: transform .7s cubic-bezier(.3,.8,.3,1); backface-visibility: hidden;
+    align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 2.1rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.18); border: 2px solid rgba(255,255,255,.25);
+    background-image: radial-gradient(rgba(255,255,255,.18) 1px, transparent 1.5px); background-size: 14px 14px;
+  }
+  .door:nth-child(4n+1) .front { background-color: #b91c1c; }
+  .door:nth-child(4n+2) .front { background-color: #166534; }
+  .door:nth-child(4n+3) .front { background-color: #9a3412; }
+  .door:nth-child(4n+4) .front { background-color: #1e3a5f; }
+  .door .front .ribbon { position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
+    background: linear-gradient(90deg, transparent 46%, rgba(255,215,0,.55) 46%, rgba(255,215,0,.55) 54%, transparent 54%); }
+  .door.open .front { transform: rotateY(-108deg); }
+  .door.locked .front::after { content: "🔒"; position: absolute; bottom: 6px; right: 8px; font-size: .9rem; }
+  .door.locked.shake .front { animation: shake .4s; }
+  @keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+  .door:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; border-radius: 12px; }
+  .bonus .door .front { background-color: #4a148c !important; font-size: 1.6rem; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .toolbar button { font: 700 .9rem system-ui, sans-serif; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; }
+  .toolbar button:hover { border-color: var(--red); color: var(--red); }
+  .start { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .start a.big { display: inline-block; background: var(--red); color: #fff; text-decoration: none; font-weight: 800; padding: 10px 18px; border-radius: 10px; }
+  @media (prefers-reduced-motion: reduce) { .door .front { transition: none; } }
+</style>
+</head>
+<body>
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Raspberry Pi Pico W · MicroPython · AZ-Delivery 35-in-1 sensor kit</p>
+  <h1>🎄 Pico W Coding Advent Calendar</h1>
+  <p class="lede">24 days, 35 sensor modules, one tiny computer. Behind each door: a circuit to build step by step, code explained cell by cell, and a challenge (with a hidden solution) to stretch your skills.</p>
+</div></header>
+<main class="page">
+
+<div class="card start" style="margin-top:22px">
+  <div style="flex:1;min-width:220px">
+    <b>New here?</b> Start with the setup page: install MicroPython, get Thonny running and read the safety rules (10 minutes).
+  </div>
+  <a class="big" href="days/day00.html">Start here: Setup ▶</a>
+</div>
+
+<h2><span class="em">🚪</span>Open today's door</h2>
+<div class="toolbar">
+  <span id="lockinfo" class="muted"></span>
+  <button type="button" id="unlock">🔓 Unlock all doors</button>
+  <button type="button" id="closeall">Close all doors</button>
+</div>
+<div class="doors" id="doors"></div>
+
+<div class="bonus">
+  <h2><span class="em">🎁</span>Bonus days</h2>
+  <p>After Christmas: an OLED screen, a BME280 weather sensor and an MPU6050 motion sensor (not part of the 35-in-1 kit).</p>
+  <div class="doors" id="bonus"></div>
+</div>
+
+<details>
+  <summary>Overview of all days (spoilers!)</summary>
+  <div class="table-scroll"><table id="overview"><tr><th>Day</th><th>Project</th><th>Parts</th></tr></table></div>
+</details>
+
+<h2><span class="em">🧰</span>What you need</h2>
+<ul>
+  <li>Raspberry Pi Pico W with headers, micro-USB data cable</li>
+  <li>AZ-Delivery 35-in-1 sensor kit (KY-001 … KY-040 + traffic light)</li>
+  <li>Breadboard, ~20 jumper wires, four 220 Ω resistors, a magnet, an IR remote, a tea light</li>
+  <li>A computer with <a href="https://thonny.org">Thonny</a></li>
+</ul>
+
+<footer class="site">Pico W Coding Advent Calendar · MicroPython · Build carefully, have fun! 🎅</footer>
+</main>
+
+<script>
+(function () {
+  const days = window.ADVENT_DAYS;
+  const ORDER = [13, 4, 21, 8, 1, 17, 10, 24, 6, 15, 2, 19, 11, 23, 5, 14, 9, 20, 3, 16, 22, 7, 18, 12];
+  const store = {
+    get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
+  const now = new Date();
+  // Door n unlocks on December n. Outside December everything is open (handy for planning).
+  function isUnlocked(n, bonus) {
+    if (store.get("advent-unlock-all", false)) return true;
+    if (now.getMonth() !== 11) return now.getMonth() < 10 ? true : false;
+    return bonus ? now.getDate() >= 24 : now.getDate() >= n;
+  }
+  const info = document.getElementById("lockinfo");
+  if (store.get("advent-unlock-all", false)) info.textContent = "All doors unlocked.";
+  else if (now.getMonth() === 11) info.textContent = "Door n opens on 1–24 December.";
+  else if (now.getMonth() === 10) info.textContent = "It's not December yet — doors are locked. Organisers can unlock them:";
+  else info.textContent = "Outside the Advent season all doors are open.";
+
+  const pad = (n) => String(n).padStart(2, "0");
+  function makeDoor(d) {
+    const opened = store.get("advent-opened", []);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "door";
+    btn.setAttribute("aria-label", "Day " + d.n + (isUnlocked(d.n, d.bonus) ? "" : " (locked)"));
+    btn.innerHTML =
+      "<span class='inside'><b>" + d.title.replace("Bonus: ", "") + "</b><small>" + d.parts + "</small><small>Open ▶</small></span>" +
+      "<span class='front'><span class='ribbon'></span>" + d.n + "</span>";
+    if (!isUnlocked(d.n, d.bonus)) btn.classList.add("locked");
+    if (opened.indexOf(d.n) >= 0 && isUnlocked(d.n, d.bonus)) btn.classList.add("open");
+    btn.addEventListener("click", () => {
+      if (btn.classList.contains("locked")) {
+        btn.classList.remove("shake"); void btn.offsetWidth; btn.classList.add("shake");
+        return;
+      }
+      if (btn.classList.contains("open")) {
+        location.href = "days/day" + pad(d.n) + ".html";
+      } else {
+        btn.classList.add("open");
+        const o = store.get("advent-opened", []);
+        if (o.indexOf(d.n) < 0) { o.push(d.n); store.set("advent-opened", o); }
+      }
+    });
+    return btn;
+  }
+  const grid = document.getElementById("doors");
+  ORDER.forEach((n) => grid.appendChild(makeDoor(days.find((d) => d.n === n))));
+  const bonus = document.getElementById("bonus");
+  days.filter((d) => d.bonus).forEach((d) => bonus.appendChild(makeDoor(d)));
+
+  const table = document.getElementById("overview");
+  days.forEach((d) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td>" + d.n + "</td><td><a href='days/day" + pad(d.n) + ".html'>" + d.title + "</a></td><td>" + d.parts + "</td>";
+    table.appendChild(tr);
+  });
+
+  document.getElementById("unlock").addEventListener("click", () => { store.set("advent-unlock-all", true); location.reload(); });
+  document.getElementById("closeall").addEventListener("click", () => { store.set("advent-opened", []); store.set("advent-unlock-all", false); location.reload(); });
+})();
+</script>
+</body>
+</html>

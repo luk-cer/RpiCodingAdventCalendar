@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 18 · Secret Knock</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="18">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Day 18</p>
+  <h1><span class="daynum">18</span>Secret Knock</h1>
+  <p class="lede">Only elves who know the secret rhythm may enter Santa's workshop! A knock sensor listens to your rhythm, compares it with the secret one, and a touch sensor lets the owner record a new secret.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>KY-031 Knock sensor</li>
+  <li>KY-036 Touch sensor (red board)</li>
+  <li>LED Traffic Light module</li>
+  <li>11 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Meet today's parts</h2>
+<div class="grid2">
+  <div class="card"><h3>KY-031 knock sensor</h3><p>A spring inside a small housing closes a contact when it's jolted — like Day 7's shock sensor, but tuned for knocks. Tap the table next to the breadboard, or tap the module itself.</p></div>
+  <div class="card"><h3>KY-036 touch sensor</h3><p>The bent metal wire acts as an antenna: your body picks up electrical "hum" from the mains wiring around you, and touching the wire feeds that into an amplifier. The comparator turns it into a digital signal on <b>DO</b>.</p></div>
+</div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "touch", "name": "KY-036 Touch sensor", "col": 24, "pins": ["AO", "G", "+", "DO"], "color": "#b71c1c", "icon": "pot" },
+    { "id": "knock", "name": "KY-031 Knock sensor", "col": 32, "pins": ["S", "+", "-"], "icon": "sensor", "iconColor": "#e0e0e0" },
+    { "id": "tl", "name": "Traffic Light module", "col": 40, "pins": ["R", "Y", "G", "GND"], "icon": "traffic" }
+  ],
+  "wires": [
+    { "from": "touch.G", "to": "-" },
+    { "from": "touch.+", "to": "+" },
+    { "from": "GP16", "to": "touch.DO", "color": "blue", "note": "touch" },
+    { "from": "GP17", "to": "knock.S", "color": "purple", "note": "knock" },
+    { "from": "knock.+", "to": "+" },
+    { "from": "knock.-", "to": "-" },
+    { "from": "GP15", "to": "tl.R", "color": "orange" },
+    { "from": "GP14", "to": "tl.Y", "color": "yellow" },
+    { "from": "GP13", "to": "tl.G", "color": "green" },
+    { "from": "tl.GND", "to": "-" }
+  ]
+}
+</script></div>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Test the sensors</h3>
+<script type="text/x-python">
+from machine import Pin
+import time
+
+touch = Pin(16, Pin.IN)
+knock = Pin(17, Pin.IN)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+
+for _ in range(100):
+    print("touch:", touch.value(), " knock:", knock.value())
+    time.sleep_ms(50)
+</script>
+<p>Like the shock sensor, a knock is so short you'll rarely catch it by polling — interrupts to the rescue again. For the touch sensor, turn the potentiometer until the board's second LED lights only while you touch the wire. Note which value means "touched":</p>
+<script type="text/x-python">
+TOUCH_IDLE = touch.value()      # don't touch at start-up
+
+def touched():
+    return touch.value() != TOUCH_IDLE
+</script>
+
+<h3>2. Collect knock times</h3>
+<p>The handler stores a timestamp per knock. A real knock makes the spring bounce several times, so anything within 100 ms of the previous knock is ignored.</p>
+<script type="text/x-python">
+knocks = []
+
+def on_knock(pin):
+    now = time.ticks_ms()
+    if not knocks or time.ticks_diff(now, knocks[-1]) > 100:
+        knocks.append(now)
+
+knock.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=on_knock)
+</script>
+
+<h3>3. Listen for a whole pattern</h3>
+<p>A pattern starts with the first knock and ends after 1.5 s of silence. We return the <b>intervals</b> between knocks — the rhythm.</p>
+<script type="text/x-python">
+def listen():
+    knocks.clear()
+    while not knocks:                   # wait for the first knock
+        time.sleep_ms(10)
+    while time.ticks_diff(time.ticks_ms(), knocks[-1]) < 1500:
+        time.sleep_ms(10)
+    times = list(knocks)
+    return [time.ticks_diff(b, a) for a, b in zip(times, times[1:])]
+
+print("Knock a rhythm...")
+print(listen())
+</script>
+<script type="text/x-output">
+[512, 248, 260, 497, 1010, 503]
+</script>
+
+<h3>4. Compare rhythms, not speeds</h3>
+<p>Nobody knocks at exactly the same speed twice. So we <b>normalise</b>: divide every interval by the longest one. Fast or slow, "shave and a haircut … two bits" always becomes roughly <code>[0.5, 0.25, 0.25, 0.5, 1.0, 0.5]</code>. Then each interval must be within 25 % of the secret.</p>
+<script type="text/x-python">
+def normalise(intervals):
+    longest = max(intervals)
+    return [i / longest for i in intervals]
+
+def matches(attempt, secret, tolerance=0.25):
+    if len(attempt) != len(secret):
+        return False
+    a, s = normalise(attempt), normalise(secret)
+    return all(abs(x - y) <= tolerance for x, y in zip(a, s))
+
+SECRET = [500, 250, 250, 500, 1000, 500]      # "shave and a haircut ... two bits"
+print(matches([512, 248, 260, 497, 1010, 503], SECRET))   # True
+print(matches([300, 300, 300, 300, 300, 300], SECRET))    # False
+</script>
+
+<h3>5. The workshop door</h3>
+<p>Red = locked. Knock correctly → green for 5 seconds. Touch the sensor → yellow: knock a new secret to store it.</p>
+<script type="text/x-python">
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+while True:
+    show(1, 0, 0)
+    if touched():
+        show(0, 1, 0)
+        print("Recording new secret - knock it now")
+        while touched():
+            time.sleep_ms(10)
+        new = listen()
+        if len(new) >= 2:
+            SECRET = new
+            print("Saved:", SECRET)
+        continue
+    if knocks:
+        attempt = listen()
+        if len(attempt) >= 1 and matches(attempt, SECRET):
+            print("Welcome, elf!")
+            show(0, 0, 1); time.sleep(5)
+        else:
+            print("Wrong rhythm:", attempt)
+            for _ in range(3):
+                show(0, 0, 0); time.sleep(0.15); show(1, 0, 0); time.sleep(0.15)
+    time.sleep_ms(20)
+</script>
+
+<script type="text/x-python" data-title="Full program — day18 main.py">
+from machine import Pin
+import time
+
+touch = Pin(16, Pin.IN)
+knock = Pin(17, Pin.IN)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+TOUCH_IDLE = touch.value()
+SECRET = [500, 250, 250, 500, 1000, 500]
+knocks = []
+
+def on_knock(pin):
+    now = time.ticks_ms()
+    if not knocks or time.ticks_diff(now, knocks[-1]) > 100:
+        knocks.append(now)
+
+knock.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=on_knock)
+
+def touched():
+    return touch.value() != TOUCH_IDLE
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def listen():
+    knocks.clear()
+    while not knocks:
+        time.sleep_ms(10)
+    while time.ticks_diff(time.ticks_ms(), knocks[-1]) < 1500:
+        time.sleep_ms(10)
+    times = list(knocks)
+    return [time.ticks_diff(b, a) for a, b in zip(times, times[1:])]
+
+def normalise(intervals):
+    longest = max(intervals)
+    return [i / longest for i in intervals]
+
+def matches(attempt, secret, tolerance=0.25):
+    if len(attempt) != len(secret):
+        return False
+    return all(abs(x - y) <= tolerance for x, y in zip(normalise(attempt), normalise(secret)))
+
+while True:
+    show(1, 0, 0)
+    if touched():
+        show(0, 1, 0)
+        while touched():
+            time.sleep_ms(10)
+        new = listen()
+        if len(new) >= 2:
+            SECRET = new
+            print("New secret saved:", SECRET)
+        continue
+    if knocks:
+        attempt = listen()
+        if attempt and matches(attempt, SECRET):
+            print("Welcome, elf!")
+            show(0, 0, 1); time.sleep(5)
+        else:
+            print("Wrong rhythm:", attempt)
+            for _ in range(3):
+                show(0, 0, 0); time.sleep(0.15); show(1, 0, 0); time.sleep(0.15)
+    time.sleep_ms(20)
+</script>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Turning timestamps into intervals; normalising data so it can be compared.</li>
+  <li>Pattern matching with a tolerance; <code>all()</code> and <code>zip()</code>.</li>
+  <li>How a capacitive/"hum" touch sensor works.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: a lock that remembers and resists guessing</h2>
+<ol>
+  <li><b>Persistence:</b> a new secret is lost when the Pico restarts. Save it to a file <code>secret.json</code> and load it at start-up (fall back to the default if the file doesn't exist).</li>
+  <li><b>Lockout:</b> after 3 wrong attempts in a row, block the lock for 30 seconds: red blinks slowly and knocks are ignored. A correct knock resets the counter.</li>
+  <li><b>Safety:</b> only accept a new secret if it has at least 3 knocks (2 intervals) — otherwise yellow blinks and the old secret stays.</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p><code>import json</code>; save with <code>json.dump(SECRET, f)</code> and load with <code>json.load(f)</code>. Opening a missing file raises <code>OSError</code> — catch it. During lockout, call <code>knocks.clear()</code> regularly so old knocks don't count afterwards.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin
+import time, json
+
+touch = Pin(16, Pin.IN)
+knock = Pin(17, Pin.IN)
+red, yellow, green = Pin(15, Pin.OUT), Pin(14, Pin.OUT), Pin(13, Pin.OUT)
+TOUCH_IDLE = touch.value()
+DEFAULT = [500, 250, 250, 500, 1000, 500]
+FILE = "secret.json"
+knocks = []
+
+def on_knock(pin):
+    now = time.ticks_ms()
+    if not knocks or time.ticks_diff(now, knocks[-1]) > 100:
+        knocks.append(now)
+
+knock.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=on_knock)
+
+def load_secret():
+    try:
+        with open(FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return DEFAULT
+
+def save_secret(s):
+    with open(FILE, "w") as f:
+        json.dump(s, f)
+
+def touched():
+    return touch.value() != TOUCH_IDLE
+
+def show(r, y, g):
+    red.value(r); yellow.value(y); green.value(g)
+
+def listen():
+    knocks.clear()
+    while not knocks:
+        time.sleep_ms(10)
+    while time.ticks_diff(time.ticks_ms(), knocks[-1]) < 1500:
+        time.sleep_ms(10)
+    t = list(knocks)
+    return [time.ticks_diff(b, a) for a, b in zip(t, t[1:])]
+
+def matches(attempt, secret, tol=0.25):
+    if not attempt or len(attempt) != len(secret):
+        return False
+    ma, ms = max(attempt), max(secret)
+    return all(abs(a / ma - s / ms) <= tol for a, s in zip(attempt, secret))
+
+secret = load_secret()
+print("Loaded secret:", secret)
+failures = 0
+
+while True:
+    show(1, 0, 0)
+    if touched():
+        show(0, 1, 0)
+        while touched():
+            time.sleep_ms(10)
+        new = listen()
+        if len(new) >= 2:
+            secret = new
+            save_secret(secret)
+            print("New secret saved:", secret)
+        else:
+            print("Too short - keeping the old secret")
+            for _ in range(4):
+                show(0, 0, 0); time.sleep(0.15); show(0, 1, 0); time.sleep(0.15)
+        continue
+
+    if knocks:
+        attempt = listen()
+        if matches(attempt, secret):
+            failures = 0
+            print("Welcome, elf!")
+            show(0, 0, 1); time.sleep(5)
+        else:
+            failures += 1
+            print("Wrong ({} of 3)".format(failures))
+            if failures >= 3:
+                print("Locked out for 30 s")
+                end = time.ticks_add(time.ticks_ms(), 30000)
+                while time.ticks_diff(end, time.ticks_ms()) > 0:
+                    red.toggle(); time.sleep(0.5)
+                    knocks.clear()
+                failures = 0
+    time.sleep_ms(20)
+</script>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bonus Day 26 · Weather Station</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js"></script>
+<script src="../assets/breadboard.js"></script>
+</head>
+<body data-day="26">
+<header class="hero"><div class="hero-inner">
+  <p class="kicker">Pico W Coding Advent Calendar · Bonus Day 26</p>
+  <h1><span class="daynum">26</span>Weather Station</h1>
+  <p class="lede">The BME280 measures temperature, humidity <i>and</i> air pressure precisely. You'll write your own driver straight from the datasheet — reading registers and calibration data over I2C — and build a weather station on the OLED.</p>
+</div></header>
+<main class="page">
+<div class="nav-slot"></div>
+
+<h2><span class="em">🧰</span>You need</h2>
+<ul class="parts">
+  <li>Pico W + breadboard</li>
+  <li>BME280 sensor board (I2C)</li>
+  <li>0.96″ SSD1306 OLED</li>
+  <li>8 jumper wires</li>
+</ul>
+
+<h2><span class="em">🔍</span>Two devices, one bus</h2>
+<p>Both the OLED and the BME280 connect to the <b>same</b> SDA and SCL wires. The OLED answers at address <code>0x3C</code>, the BME280 at <code>0x76</code> (or <code>0x77</code>, depending on the board). That's the beauty of I2C.</p>
+<div class="note"><p><b>BME280 or BMP280?</b> They look identical. The BMP280 has no humidity sensor. Step 2 checks which one you have. Both work for temperature and pressure.</p></div>
+
+<h2><span class="em">🔌</span>Wiring</h2>
+<div class="breadboard"><script type="application/json">
+{
+  "modules": [
+    { "id": "bme", "name": "BME280 sensor", "col": 28, "pins": ["VIN", "GND", "SCL", "SDA"], "color": "#4a148c", "icon": "chip", "iconColor": "#cfd8dc" },
+    { "id": "oled", "name": "SSD1306 OLED 128x64", "col": 40, "pins": ["GND", "VCC", "SCL", "SDA"], "icon": "oled", "width": 8, "height": 92 }
+  ],
+  "wires": [
+    { "from": "bme.VIN", "to": "+" },
+    { "from": "bme.GND", "to": "-" },
+    { "from": "GP5", "to": "bme.SCL", "color": "yellow", "note": "I2C clock" },
+    { "from": "GP4", "to": "bme.SDA", "color": "blue", "note": "I2C data" },
+    { "from": "oled.GND", "to": "-" },
+    { "from": "oled.VCC", "to": "+" },
+    { "from": "GP5", "to": "oled.SCL", "color": "yellow", "note": "same clock line" },
+    { "from": "GP4", "to": "oled.SDA", "color": "blue", "note": "same data line" }
+  ]
+}
+</script></div>
+<p>Two wires into the same Pico pin's column is fine: everything in a breadboard column is connected. Your BME280 board may have 6 pins (<code>VCC GND SCL SDA CSB SDO</code>) — leave CSB and SDO unconnected.</p>
+
+<h2><span class="em">📓</span>Code, step by step</h2>
+
+<h3>1. Scan the bus</h3>
+<script type="text/x-python">
+from machine import Pin, I2C
+import time, struct
+
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+print([hex(a) for a in i2c.scan()])
+</script>
+<script type="text/x-output">
+['0x3c', '0x76']
+</script>
+
+<h3>2. Registers and the chip ID</h3>
+<p>I2C sensors are organised as numbered <b>registers</b> — little memory cells you read and write. The datasheet lists them. Register <code>0xD0</code> holds a chip ID: <code>0x60</code> for a BME280, <code>0x58</code> for a BMP280.</p>
+<script type="text/x-python">
+ADDR = 0x76          # change to 0x77 if that's what the scan showed
+chip_id = i2c.readfrom_mem(ADDR, 0xD0, 1)[0]
+print(hex(chip_id), "BME280" if chip_id == 0x60 else "BMP280 (no humidity)" if chip_id == 0x58 else "unknown")
+</script>
+
+<h3>3. Calibration data</h3>
+<p>Every BME280 is measured at the factory, and correction values are stored inside it. The raw readings are meaningless without them. They live at <code>0x88–0xA1</code> and <code>0xE1–0xE7</code>. <code>struct.unpack</code> turns bytes into numbers: <code>&lt;</code> = little-endian, <code>H</code> = unsigned 16-bit, <code>h</code> = signed 16-bit.</p>
+<script type="text/x-python">
+c = i2c.readfrom_mem(ADDR, 0x88, 24)
+T1, T2, T3, P1, P2, P3, P4, P5, P6, P7, P8, P9 = struct.unpack("<HhhHhhhhhhhh", c)
+
+H1 = i2c.readfrom_mem(ADDR, 0xA1, 1)[0]
+e = i2c.readfrom_mem(ADDR, 0xE1, 7)
+H2 = struct.unpack("<h", e[0:2])[0]
+H3 = e[2]
+H4 = (e[3] << 4) | (e[4] & 0x0F)        # two 12-bit values squeezed into 3 bytes
+H5 = (e[5] << 4) | (e[4] >> 4)
+H4 = H4 - 4096 if H4 & 0x800 else H4      # make them signed
+H5 = H5 - 4096 if H5 & 0x800 else H5
+H6 = e[6] - 256 if e[6] > 127 else e[6]
+print("T1..T3:", T1, T2, T3)
+</script>
+
+<h3>4. Start measuring</h3>
+<p>Three configuration registers: humidity oversampling (<code>0xF2</code>, must be written first), temperature/pressure oversampling + mode (<code>0xF4</code>), and timing/filter (<code>0xF5</code>). <code>0x27</code> means "1× oversampling for both, normal mode" (measure continuously).</p>
+<script type="text/x-python">
+i2c.writeto_mem(ADDR, 0xF2, b"\x01")     # humidity x1
+i2c.writeto_mem(ADDR, 0xF4, b"\x27")     # temp x1, pressure x1, normal mode
+i2c.writeto_mem(ADDR, 0xF5, b"\xA0")     # 1 s standby, no filter
+time.sleep_ms(50)
+</script>
+
+<h3>5. Raw readings</h3>
+<p>All results sit in 8 bytes from <code>0xF7</code>: pressure (20 bits), temperature (20 bits), humidity (16 bits). We glue the bytes together with shifts.</p>
+<script type="text/x-python">
+def read_raw():
+    d = i2c.readfrom_mem(ADDR, 0xF7, 8)
+    adc_p = (d[0] << 12) | (d[1] << 4) | (d[2] >> 4)
+    adc_t = (d[3] << 12) | (d[4] << 4) | (d[5] >> 4)
+    adc_h = (d[6] << 8) | d[7]
+    return adc_t, adc_p, adc_h
+
+print(read_raw())
+</script>
+
+<h3>6. Compensation formulas</h3>
+<p>These come straight from the BME280 datasheet (section 8.1). Temperature is computed first, because it produces <code>t_fine</code>, which the pressure and humidity formulas need. Don't worry about understanding every constant — this is what "implementing a datasheet" looks like.</p>
+<script type="text/x-python">
+def compensate(adc_t, adc_p, adc_h):
+    v1 = (adc_t / 16384 - T1 / 1024) * T2
+    v2 = (adc_t / 131072 - T1 / 8192) ** 2 * T3
+    t_fine = v1 + v2
+    temp = t_fine / 5120
+
+    v1 = t_fine / 2 - 64000
+    v2 = v1 * v1 * P6 / 32768 + v1 * P5 * 2
+    v2 = v2 / 4 + P4 * 65536
+    v1 = (P3 * v1 * v1 / 524288 + P2 * v1) / 524288
+    v1 = (1 + v1 / 32768) * P1
+    if v1 == 0:
+        pres = 0
+    else:
+        p = (1048576 - adc_p - v2 / 4096) * 6250 / v1
+        pres = p + (P9 * p * p / 2147483648 + p * P8 / 32768 + P7) / 16
+
+    h = t_fine - 76800
+    h = (adc_h - (H4 * 64 + H5 / 16384 * h)) * (H2 / 65536 * (1 + H6 / 67108864 * h * (1 + H3 / 67108864 * h)))
+    h = h * (1 - H1 * h / 524288)
+    hum = max(0, min(100, h))
+    return temp, pres / 100, hum        # °C, hPa, %RH
+
+print("{:.2f} °C  {:.2f} hPa  {:.1f} %".format(*compensate(*read_raw())))
+</script>
+<script type="text/x-output">
+21.84 °C  1013.62 hPa  43.7 %
+</script>
+
+<h3>7. Package it as a driver</h3>
+<p>Everything above, tidied into a class in its own file. Save this on the Pico as <code>bme280_mini.py</code> — then any program can <code>import</code> it.</p>
+<script type="text/x-python" data-title="bme280_mini.py (save on the Pico)">
+import struct, time
+
+class BME280:
+    def __init__(self, i2c, addr=0x76):
+        self.i2c, self.addr = i2c, addr
+        rd = lambda reg, n: i2c.readfrom_mem(addr, reg, n)
+        (self.T1, self.T2, self.T3, self.P1, self.P2, self.P3, self.P4,
+         self.P5, self.P6, self.P7, self.P8, self.P9) = struct.unpack("<HhhHhhhhhhhh", rd(0x88, 24))
+        self.H1 = rd(0xA1, 1)[0]
+        e = rd(0xE1, 7)
+        self.H2 = struct.unpack("<h", e[0:2])[0]
+        self.H3 = e[2]
+        h4 = (e[3] << 4) | (e[4] & 0x0F)
+        h5 = (e[5] << 4) | (e[4] >> 4)
+        self.H4 = h4 - 4096 if h4 & 0x800 else h4
+        self.H5 = h5 - 4096 if h5 & 0x800 else h5
+        self.H6 = e[6] - 256 if e[6] > 127 else e[6]
+        i2c.writeto_mem(addr, 0xF2, b"\x01")
+        i2c.writeto_mem(addr, 0xF4, b"\x27")
+        i2c.writeto_mem(addr, 0xF5, b"\xA0")
+        time.sleep_ms(50)
+
+    def read(self):
+        """Returns (temperature °C, pressure hPa, humidity %RH)."""
+        d = self.i2c.readfrom_mem(self.addr, 0xF7, 8)
+        adc_p = (d[0] << 12) | (d[1] << 4) | (d[2] >> 4)
+        adc_t = (d[3] << 12) | (d[4] << 4) | (d[5] >> 4)
+        adc_h = (d[6] << 8) | d[7]
+
+        v1 = (adc_t / 16384 - self.T1 / 1024) * self.T2
+        v2 = (adc_t / 131072 - self.T1 / 8192) ** 2 * self.T3
+        t_fine = v1 + v2
+        temp = t_fine / 5120
+
+        v1 = t_fine / 2 - 64000
+        v2 = v1 * v1 * self.P6 / 32768 + v1 * self.P5 * 2
+        v2 = v2 / 4 + self.P4 * 65536
+        v1 = (self.P3 * v1 * v1 / 524288 + self.P2 * v1) / 524288
+        v1 = (1 + v1 / 32768) * self.P1
+        pres = 0
+        if v1:
+            p = (1048576 - adc_p - v2 / 4096) * 6250 / v1
+            pres = p + (self.P9 * p * p / 2147483648 + p * self.P8 / 32768 + self.P7) / 16
+
+        h = t_fine - 76800
+        h = (adc_h - (self.H4 * 64 + self.H5 / 16384 * h)) * (
+            self.H2 / 65536 * (1 + self.H6 / 67108864 * h * (1 + self.H3 / 67108864 * h)))
+        h = h * (1 - self.H1 * h / 524288)
+        return temp, pres / 100, max(0, min(100, h))
+</script>
+
+<h3>8. The weather station</h3>
+<p>Big temperature on top, humidity and pressure below, and an altitude estimate from the <b>barometric formula</b>. Air pressure drops about 1 hPa per 8 m of height — so <code>SEA_LEVEL_HPA</code> must be today's sea-level pressure from a weather website for a good altitude.</p>
+<script type="text/x-python" data-title="Full program — day26 main.py (needs bme280_mini.py and ssd1306.py)">
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+from bme280_mini import BME280
+import time
+
+SEA_LEVEL_HPA = 1013.25
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+oled = SSD1306_I2C(128, 64, i2c)
+bme = BME280(i2c, 0x76)
+
+def altitude(hpa):
+    return 44330 * (1 - (hpa / SEA_LEVEL_HPA) ** (1 / 5.255))
+
+def big_text(s, x, y, scale=2):
+    """Draw text scaled up by drawing each font pixel as a square."""
+    import framebuf
+    buf = bytearray(8 * len(s))
+    fb = framebuf.FrameBuffer(buf, 8 * len(s), 8, framebuf.MONO_HLSB)
+    fb.text(s, 0, 0, 1)
+    for py in range(8):
+        for px in range(8 * len(s)):
+            if fb.pixel(px, py):
+                oled.fill_rect(x + px * scale, y + py * scale, scale, scale, 1)
+
+while True:
+    t, p, h = bme.read()
+    oled.fill(0)
+    big_text("{:.1f}C".format(t), 0, 0)
+    oled.text("Hum   {:5.1f} %".format(h), 0, 24)
+    oled.text("Pres {:6.1f}".format(p), 0, 36)
+    oled.text("Alt  {:6.0f} m".format(altitude(p)), 0, 48)
+    oled.show()
+    print("{:.2f} °C  {:.2f} hPa  {:.1f} %".format(t, p, h))
+    time.sleep(2)
+</script>
+<p>Try it: carry the Pico (on a power bank) up or down a flight of stairs and watch the altitude change by a few metres. The BME280 is sensitive enough to notice!</p>
+
+<h2><span class="em">🧠</span>What you learned</h2>
+<ul>
+  <li>Several devices on one I2C bus; registers, <code>readfrom_mem</code>, <code>writeto_mem</code>.</li>
+  <li>Reading a datasheet: chip ID, calibration constants, bit packing, compensation formulas.</li>
+  <li><code>struct.unpack</code>, signed vs unsigned numbers, writing your own reusable driver module.</li>
+  <li>The barometric formula; scaling text with a frame buffer.</li>
+</ul>
+
+<section class="exercise">
+<h2><span class="em">⭐</span>Exercise: pressure trend and forecast</h2>
+<p>Falling air pressure often means bad weather is coming; rising pressure means it's clearing up. Turn your station into a forecaster:</p>
+<ol>
+  <li>Store a pressure reading every 10 minutes (use 10 seconds while testing), keeping the last 36 (6 hours).</li>
+  <li>Draw them as a small graph on the right side of the OLED, scaled between the minimum and maximum stored values.</li>
+  <li>Compare the newest reading with the one 3 hours ago: rising by more than 1.5 hPa → "Clearing ☀", falling by more than 1.5 hPa → "Rain?", otherwise "Steady".</li>
+</ol>
+<details class="hint"><summary>Hint</summary>
+<p>Keep the stored values in a list and draw them with <code>oled.line()</code> between neighbouring points. Guard against all values being equal (division by zero when scaling) by making the range at least 1 hPa.</p>
+</details>
+<details class="solution"><summary>Show solution</summary>
+<script type="text/x-python" data-title="Solution">
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+from bme280_mini import BME280
+import time
+
+STORE_EVERY_S = 10          # 600 for real use (10 minutes)
+KEEP = 36                   # 6 hours at 10-minute steps
+THREE_HOURS = 18            # readings in 3 hours
+
+i2c = I2C(0, sda=Pin(4), scl=Pin(5), freq=400_000)
+oled = SSD1306_I2C(128, 64, i2c)
+bme = BME280(i2c, 0x76)
+history = []
+last_store = None
+
+def forecast():
+    if len(history) <= THREE_HOURS:
+        return "Learning..."
+    change = history[-1] - history[-1 - THREE_HOURS]
+    if change > 1.5:
+        return "Clearing"
+    if change < -1.5:
+        return "Rain?"
+    return "Steady"
+
+def draw_graph(x0, y0, w, h):
+    oled.rect(x0, y0, w, h, 1)
+    if len(history) < 2:
+        return
+    lo, hi = min(history), max(history)
+    if hi - lo < 1:
+        mid = (hi + lo) / 2
+        lo, hi = mid - 0.5, mid + 0.5
+    step = (w - 2) / (KEEP - 1)
+    pts = [(x0 + 1 + int(i * step), y0 + h - 2 - int((v - lo) / (hi - lo) * (h - 3)))
+           for i, v in enumerate(history)]
+    for (xa, ya), (xb, yb) in zip(pts, pts[1:]):
+        oled.line(xa, ya, xb, yb, 1)
+
+while True:
+    t, p, h = bme.read()
+    now = time.time()
+    if last_store is None or now - last_store >= STORE_EVERY_S:
+        history = (history + [p])[-KEEP:]
+        last_store = now
+
+    oled.fill(0)
+    oled.text("{:.1f}C".format(t), 0, 0)
+    oled.text("{:.0f}%".format(h), 0, 12)
+    oled.text("{:.1f}".format(p), 0, 28)
+    oled.text("hPa", 0, 38)
+    oled.text(forecast(), 0, 54)
+    draw_graph(56, 0, 72, 50)
+    oled.show()
+    time.sleep(1)
+</script>
+<p>This is roughly how the "storm glass" barometers of the 1800s and today's simple weather stations predict the weather. It's right surprisingly often!</p>
+</details>
+</section>
+
+<div class="nav-slot"></div>
+<footer class="site">Pico W Coding Advent Calendar · MicroPython</footer>
+</main>
+</body>
+</html>
