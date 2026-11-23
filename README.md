@@ -1,5 +1,7 @@
 # 🎄 Pico W Coding Advent Calendar
 
+**▶ Open the calendar: https://luk-cer.github.io/RpiCodingAdventCalendar/**
+
 A 24-day coding advent calendar for the **Raspberry Pi Pico W** and the
 **AZ-Delivery 35-in-1 sensor kit** (KY-001 … KY-040 + LED traffic light), written in
 **MicroPython**. Three bonus days add an SSD1306 OLED, a BME280 and an MPU6050.
